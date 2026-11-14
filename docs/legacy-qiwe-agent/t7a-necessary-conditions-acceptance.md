@@ -99,7 +99,7 @@ Windows/Linux 最终候选组合摘要均为 `cc5b49abe358a0b74ef08104af876a7094
 
 本次故障是第一进程中的定点 SQLite abort；第二进程证明随后已结清状态的持久保留，未模拟恰好在原两次写入之间的进程崩溃。基线兼容逐字节比较见 `compatibility-stage.json`：默认 O、D2、旧 isolated D3/D5 各 208 个生成模块与 `cf52468` 完全相同，不重复将旧运行写成本次新通过。
 
-主执行者本次在仓库运行 `E:/npm.cmd test -- --maxWorkers=1`（43 文件、588 pass）、`E:/npm.cmd run typecheck`、`E:/npm.cmd run build`，均 exit 0；日志为 `public.log`、`typecheck.log`、`build.log`。另运行 `E:/node.exe node_modules/vitest/vitest.mjs run --config integrations/native/conversation-execution.vitest.config.mts`，2 pass（`native-port.log`）。无 lint 脚本。独立审查记录位于 `.local/t7a-settlement-20261023/independent-review.md`，最终结论由主执行者核对冻结文档、Linux 与 Git 版本后记录。
+主执行者本次在仓库运行 `E:/npm.cmd test -- --maxWorkers=1`（43 文件、588 pass）、`E:/npm.cmd run typecheck`、`E:/npm.cmd run build`，均 exit 0；日志为 `public.log`、`typecheck.log`、`build.log`。另运行 `E:/node.exe node_modules/vitest/vitest.mjs run --config integrations/native/conversation-execution.vitest.config.mts`，2 pass（`native-port.log`）。无 lint 脚本。独立审查记录位于 独立审查记录，最终结论由主执行者核对冻结文档、Linux 与 Git 版本后记录。
 
 ### 对 T7 的作用与剩余义务
 

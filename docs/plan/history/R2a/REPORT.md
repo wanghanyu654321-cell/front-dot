@@ -1,6 +1,6 @@
 # R2a 报告：发送门 UPDATE 的 f 条件变异（R2-M2a）
 
-- 起点：R2 树 `dfedabfa3c38f4048f6a5474c91be67f1570da86`（未动 repo-r2）；工作树 `<WORKSPACE>/fc-migration/repo-r2a`（HEAD = G `f2a8105a…` + read-tree dfedabfa）。
+- 起点：R2 树 `dfedabfa3c38f4048f6a5474c91be67f1570da86`（未动 repo-r2）；工作树 `<本地路径>`（HEAD = G `f2a8105a…` + read-tree dfedabfa）。
 - **新树：`6fcd27659ce4d7c149a8a4887e72c7ebc284d9c0`**（`r2a-tree.txt`）。`r2a.patch`（相对 dfedabfa）和 `r2a-cumulative.patch`（相对 G）都已在干净目录里 `git apply`，复现出同一棵树。
 - 改动：只新增了一个测试文件 `tests/r2a/r2a-send-fence.integration.test.ts`（111 行），**没有改任何源码**。
 
@@ -40,8 +40,8 @@ R2 全套变异复跑（`mutation-check.py`，19 个）：18 个被杀，M2a 预
 - tsc、typecheck、build：exit=0。
 - 全量 vitest：1040 通过、2 跳过，失败的只有已知的 2 条 `live-model-smoke`。
 - test:pg：75/75（R2 是 72，加上新增 3 条）；r2a + r2-pg + M06 PG 连跑 5 遍，每遍 18/18。
-- 临时 PG17（`<WORKSPACE>/fc-migration/pg-temp`）已停止，没有残留 postgres 进程。
-- 写入检查：开始和结束各做一次（`writer-check-*.txt`），都没有别的写入进程；`audit/` 的哈希不变；repo-r2 的 index 修改时间不变，树仍然是 dfedabfa。
+- 临时 PG17（`<本地路径>`）已停止，没有残留 postgres 进程。
+- 写入检查：开始和结束各做一次（`writer-check-*.txt`），都没有别的写入进程；私有评测产物的哈希不变；repo-r2 的 index 修改时间不变，树仍然是 dfedabfa。
 
 ## 约束
 没有 commit / push，没连服务器、企微和共用 PG（只连了 127.0.0.1:55432 的临时集群），没读 env 和凭据，没用 sudo，没删数据。

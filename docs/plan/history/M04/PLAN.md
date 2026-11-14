@@ -1,7 +1,7 @@
 # M04 实施计划（写于代码改动前，18:59 UTC+8）
 
 1. 工作树：`git worktree add --detach repo-m04 f2a8105` + `git apply M03/m03-cumulative.patch`；临时索引 `git add -A && git write-tree` = 793ce100 ✅（与 M03/m03-tree.txt 一致）。开工前核对：无 codex/vitest/tsc 进程，repo-m02/repo-m03 45 秒内无文件变化；只在 repo-m04 写。node_modules 从 repo-m03 复制（不联网）。
-2. 冻结 M04 盲测集 `tests/role-eval/fixtures/intent-corpus-blind-m04.json`（27 条，sha256 c1eeae86…176d），改分类器前跑一次 → `M04/blind-m04-first-run.txt`（12/27）。M02 盲测集不动（d506c520…）。
+2. 冻结 M04 盲测集（27 条），改分类器前跑一次 → 留出测试集产物（12/27）。M02 盲测集不动。
 3. `access-policy.ts`：CAPABILITIES 增 `target_set`、`correct_own`、`correct_store`。
 4. `report-parse.ts`：`parseLooseReport`（无日期标题、每行都是标准行 → 今天营业日）。
 5. 新 `ledger-commands.ts`（纯函数）：金额（5w/3万/4千/5k/30000/600元）、目标指令（谁/周期/金额）、更正指令（改金额/撤回、第N笔、可选人名）。

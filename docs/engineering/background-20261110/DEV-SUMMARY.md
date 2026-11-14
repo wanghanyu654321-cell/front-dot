@@ -1,14 +1,14 @@
-# Front Claw / OpenDot 全部开发总结（Codex牙，截至 2026-11-10 22:00 UTC+8）
+# Front Claw / OpenDot 全部开发总结（助手B，截至 2026-11-10 22:00 UTC+8）
 
-> 依据用户 21:54 原话（牙牙转述）：「再把代码的变更开发目的也总结一下 然后让codex牙也总结他那边的关于这个产品的目前全部开发总结」；21:55 补充（牙牙转述）：「让codex牙还要包含自己之前的总结记忆 不止是现在接入后的」。
+> 依据用户 21:54 原话（助手A转述）：「再把代码的变更开发目的也总结一下 然后让助手B也总结他那边的关于这个产品的目前全部开发总结」；21:55 补充（助手A转述）：「让助手B还要包含自己之前的总结记忆 不止是现在接入后的」。
 > **全程只读**：没连服务器、没读 env、没 sudo、没改任何已有文件、没 commit/push、没开窗口。时间都是北京时间（UTC+8）。git/GitHub 的 Z 时间已换算。
-> 证据路径默认相对 `<WORKSPACE>/front-claw-evidence/`（简称 `E/`）。来源标注：
-> - 【文件】：box 上文件，附路径（必要时带 sha256 前 8–16 位）；
+> 证据路径默认相对 `<证据目录>/`（简称 `E/`）。来源标注：
+> - 【文件】：本机上文件，附路径（必要时带 sha256 前 8–16 位）；
 > - 【GitHub】：只读 GitHub API（PR #35 元数据、commit 文件清单）；
-> - 【会话·牙牙】：牙牙会话记录（只读检索，没有时间戳）；
-> - 【仅记忆】：只在 Codex牙 记忆或任务清单里，没找到文件证据。
+> - 【会话记录】：助手A会话记录（只读检索，没有时间戳）；
+> - 【仅记忆】：只在助手B记忆或任务清单里，没找到文件证据。
 > 「已证实」是指文件或日志能直接对上；「推断」另外标出。找不到的写「证据未找到」。
-> Codex牙 自己的历史会话**不可检索**（SearchTranscripts 返回「This session has no record」）。早期 Codex牙 的发言只能从牙牙会话里转引。
+> 助手B自己的历史会话**不可检索**。早期助手B的发言只能从助手A会话里转引。
 
 ---
 
@@ -16,7 +16,7 @@
 
 - **代码主线：** 仓库 `<PRIVATE_ORG>/qiwe-agent`。PR #35（`cursor/unified-assistant-report-02b7` → `live/front-claw-20261102`）**已推送、未合并**，head 是 `f2a8105`【GitHub】。
   - 之后的 v2 边界补丁和 step3 r1–r9 补丁**都没有提交**。它们只存在两个地方：
-    - box 上的 `.patch` 文件；
+    - 本机上的 `.patch` 文件；
     - 现场 stage `<SERVER_APP_DIR>/frontagent-r3-20261029/input`。按顺序叠加打入并重新封存，现在封存在 r9（marker `d05d316c…`）。
   - r10 是**已暂停草稿**，没上现场。
 - **现场已实证的链路（r9 代码）：**
@@ -30,25 +30,25 @@
   - PG 写入草稿和目标。
   - 证据：`E/step4A-live-20261110/step4A-04-residue.log`，例如 `FINAL_REPLY admitted=13 runner_turns=6 final_delivery=6`、`MODEL_REPLY … ok=1`、`RESULT=S5_RESIDUE_CLEAN`。
 - **产品层大面积不合格：** 窗口 A 的 21 项里，实测过 2 项、实测不过 5 项、因操作偏差无效 7 项、未测 7 项（`E/issue-register-20261110/ISSUE-REGISTER.md` §3）。P0 有 4 条：PR-01、PR-03、PR-06、PR-09。
-- **迁移方向：** 约 11-06 已比对 OpenDot 并提出搬迁方案【会话·牙牙】；11-07 用 gpt-6-astra 审查，补了 6 个缺口【文件】。迁移计划**还没写，也没执行**。用户 16:04 定的是「其他跑通后再做全盘迁移计划，先审阅」（任务清单 `opendot-migration-plan` 仍是 PENDING）【仅记忆】。
+- **迁移方向：** 约 11-06 已比对 OpenDot 并提出搬迁方案【会话记录】；11-07 用 gpt-6-astra 审查，补了 6 个缺口【文件】。迁移计划**还没写，也没执行**。用户 16:04 定的是「其他跑通后再做全盘迁移计划，先审阅」（任务清单 `opendot-migration-plan` 仍是 PENDING）【仅记忆】。
 
 ---
 
-## 1. 前史与早期工作（Codex牙 接入 step3 补丁线之前）
+## 1. 前史与早期工作（助手B接入 step3 补丁线之前）
 
-### 1.1 仓库前史：已推送，非 Codex牙 所写【文件：box 克隆 `/workspace/qa2`、`/workspace/r9src/repo`、`/workspace/qiwe-agent`、`/workspace/qiwe-src`】
+### 1.1 仓库前史：已推送，非助手B所写【文件：4 个本机克隆】
 
-- **10-17 → 11-02，共 43 个提交**（`git log f81fd91`，在 `/workspace/qa2`）。
+- **10-17 → 11-02，共 43 个提交**（`git log f81fd91`，在 `<本地路径>`）。
   - 首个提交：`2590fa5` 10-17「feat: add isolated WeCom identity bridge and shared authorization」。
   - 10-17 到 10-18：隔离版企微的身份桥接、报数确认与查询、投递恢复与去重、更正、汇总、Excel、任务取消。
   - 10-20 到 10-25：Native 宿主、对话 intake/执行、受控合成试点、本地真实企微 pilot 装配、真实 Docker transport 验证、原 Frontagent 基线文档。
   - 10-29 到 10-31：复用既有 Frontagent 状态、受控真实 pilot 交接文档，以及 `docs/handoff-20261031/`。
   - 11-01：`3818945` 做 Front Claw 命名和绑定身份的自动选岗；`c86601d` 把身份限定在 d3Runner 内。这两个提交在分支 `feat/front-claw-auto-role-20261101`。
   - 11-02 22:43：`f81fd91`「chore: snapshot live Lighthouse changes」，分支 `live/front-claw-20261102`，是 PR #35 的 base。
-- **其他分支（`/workspace/qiwe-src`）：** `cursor/isolated-synthetic-live-preflight-8609`、`feat/wecom-controlled-pilot` 等。最后提交是 `0a3cd64`，10-31。
-- **状态：** 都是 origin 上的已推送历史。各提交的作者和来源 agent 不在本总结范围；Codex牙 没参与，**仅 git 证据**。
+- **其他分支（`<本地路径>`）：** `cursor/isolated-synthetic-live-preflight-8609`、`feat/wecom-controlled-pilot` 等。最后提交是 `0a3cd64`，10-31。
+- **状态：** 都是 origin 上的已推送历史。各提交的作者和来源 agent 不在本总结范围；助手B没参与，**仅 git 证据**。
 
-### 1.2 PR #35：统一 Front Claw 助手 + Postgres【GitHub：PR #35 元数据和 commits；`/workspace/qa2` git show】
+### 1.2 PR #35：统一 Front Claw 助手 + Postgres【GitHub：PR #35 元数据和 commits；`<本地路径>` git show】
 
 PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−495。PR 正文自述「Not merged. Not deployed. The 21-item real acceptance was not run.」
 
@@ -61,16 +61,16 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 | `95467af` | 11-03 17:03 | 在 live 基线上从 role-eval 打开 PG，新增 `directory-store.ts`、`front-claw-boot.ts`、`pg-pool.ts`；live-entry/worker 接 DB | 21 个文件，+735/−34 |
 | `f2a8105` | 11-08 14:21 | 店务口令先走已打开的账本；草稿认领后在一个事务里完成，入账幂等；`确认预约 N` 锁定在店长看到的那份列表上；通知状态与业务提交分开记录；Docker CLI 在 entry 进程里读 `--env-file` | 22 个文件，+1494/−127，含新增 `tests/role-eval/store-entry.test.ts`（517 行） |
 
-- **PR 正文自报的测试**（不是 Codex牙 复跑）：
+- **PR 正文自报的测试**（不是助手B复跑）：
   - typecheck 和 build 通过；
   - Vitest store-entry 加统一 handler 共 23 个通过；
   - launcher 21 个通过；
   - `test:pg` 8 个通过，跑在临时本地 PG16 上。
-- **现场：** 11-08 15:19，云端 agent 完成 stage 同步和封存，seal/verify 61992 个文件【文件：`E/stage-preparation-completed-20261108.json`，sha 111c2ab8…】。PLANS.md 第 2 步记「PR35 @ f2a8105a … stage 已同步并 seal」【文件：`/workspace/front-claw-collab/PLANS.md:19-20`】。
+- **现场：** 11-08 15:19，云端 agent 完成 stage 同步和封存，seal/verify 61992 个文件【文件：`E/stage-preparation-completed-20261108.json`，sha 111c2ab8…】。PLANS.md 第 2 步记「PR35 @ f2a8105a … stage 已同步并 seal」【文件：`<本地路径>`】。
 
-### 1.3 OpenDot 迁移方案与架构对齐（约 11-06 至 11-07）【会话·牙牙；没有 Codex牙 文件】
+### 1.3 OpenDot 迁移方案与架构对齐（约 11-06 至 11-07）【会话记录】
 
-说明：这部分是牙牙与用户的讨论。Codex牙 当时还没创建或者没参与，这里只转引。
+说明：这部分是助手A与用户的讨论。助手B当时还没创建或者没参与，这里只转引。
 
 - **代码对照：** 旧底座 198 个文件中有 167 个与 OpenDot 完全相同。OpenDot 多出 146 个文件，主要是 personal-agent、bot-groups、Mem0。`src/role-eval` 约 6000 行、51 个文件不引用底座，可以原样复用，约 55 个测试可以当回归测试。
 - **要改的衔接点有 3 个：**
@@ -83,16 +83,16 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
   - 第一步：修好 PR #35，接上 PG，用测试员工A测试号自测，约 2–3 天；
   - 第二步：搬到 OpenDot，约 7–8 天，先影子运行，再一键回滚。
   - Mem0 本期关闭；不做真实员工试点，改成测试员工A按老板、店长、员工逐级降权自测；磁盘 85%，清理要用户批准。
-- **评审：** 方案曾发到「Front Claw 产品×架构对齐」群，请产品经理牙和 ai 架构师牙评审。
+- **评审：** 方案曾发到「Front Claw 产品×架构对齐」群，请产品负责人和架构负责人评审。
 
-### 1.4 Codex牙 创建，CLI 安装与登录（约 11-07）【会话·牙牙，pos 1174–1193；文件旁证】
+### 1.4 助手B创建，CLI 安装与登录（约 11-07）【会话记录】
 
-- 牙牙创建 Codex牙，任务是「通过 CLI 调用 Codex 任务」，只准备环境，不碰业务仓库。
+- 助手A创建助手B，任务是「通过 CLI 调用 Codex 任务」，只准备环境，不碰业务仓库。
 - `npm install -g @openai/codex` 装的是 codex-cli 0.167.0，路径 `<LOCAL_HOME>/.local/bin/codex`。本次复核 `--version` 仍是 0.167.0【文件/实测】。
-- 用户在 Codex牙 桌面完成官方设备授权；`codex login status` 退出 0，显示「Logged in using ChatGPT」。
-- 准确时间：证据未找到。只能推断不晚于 11-07 17:51，即 `/workspace/codex-plan-review/` 的 mtime。
+- 用户在助手B桌面完成官方设备授权；`codex login status` 退出 0，显示「Logged in using ChatGPT」。
+- 准确时间：证据未找到。只能推断不晚于 11-07 17:51，即 `<本地路径>` 的 mtime。
 
-### 1.5 GPT-6-Astra 计划审查：6 项缺口（11-07 17:51–17:52）【文件：`/workspace/codex-plan-review/plan.txt`（3083a85a…）、`review.txt`（da4add23…）】
+### 1.5 GPT-6-Astra 计划审查：6 项缺口（11-07 17:51–17:52）【文件：`<本地路径>`（3083a85a…）、`review.txt`（da4add23…）】
 
 - **输入：** 群聊迁移计划，即上面 1.3 的内容，加上 21 项验收门槛的原始描述。这是后来 ACCEPTANCE-21 编号的来源。
 - **审查结论：** 有 6 项缺口，按严重性排序：
@@ -103,12 +103,12 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
   5. 验收证据不可复查，权限拒绝缺执行时检查；
   6. 缺可观测性和告警阈值。
 - **总结论：** 「可启动隔离副本中的接库、适配和迁移演练；目前不具备正式迁移放行条件」。
-- 用的模型是 gpt-6-astra，来自任务清单 `plan-model` 和 `plan-review`【仅记忆】。box 上 `E/model-verification-20261108/model-list.jsonl` 确实列出 `gpt-6-astra`【文件】，但 review.txt 本身没有记模型名。
+- 用的模型是 gpt-6-astra，来自任务清单 `plan-model` 和 `plan-review`【仅记忆】。本机上 `E/model-verification-20261108/model-list.jsonl` 确实列出 `gpt-6-astra`【文件】，但 review.txt 本身没有记模型名。
 
 ### 1.6 模型与通道核验（11-08 15:47 前后）【文件：`E/model-verification-20261108/`】
 
 - CLI 的 `model/list` 列出 gpt-5.6-sol、gpt-6-astra、gpt-6-sol、gpt-6.1-sol。用 `gpt-6.1-sol` 加 high 实测，退出 0（exec.log、exit.txt）。
-- 云端仓库通道要用 5.6 Sol high 启动时被平台拒绝：「Buy credits or switch to a Grok model」，没有生成任务 ID【会话·牙牙 pos 1438、1454】。之后用户批准改用 Grok 云端准备补丁，CLI 6.1 Sol high 做复核【仅记忆：任务清单 `front-boundary-entry-research` CANCELLED】。
+- 云端仓库通道要用 5.6 Sol high 启动时因额度不足被平台拒绝，没有生成任务 ID【会话记录】。之后用户批准改用另一个云端通道准备补丁，CLI 6.1 Sol high 做复核【仅记忆：任务清单 `front-boundary-entry-research` CANCELLED】。
 
 ### 1.7 11-08 现场准备与三次安全拦截【文件】
 
@@ -122,7 +122,7 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 
 ### 1.8 front-boundary：挂载门禁 v1 → v2（11-08）【文件】
 
-- **定位（Codex牙）：**
+- **定位（助手B）：**
   - 完整调用栈是 `full-host-local-docker.mjs:8:23 → validateLocalDockerFacts :50:155 → observeLocalDockerBoundary :110 → restoration-supervisor :152 → verify-full-host :279`；
   - 第 50 行要求挂载目标正好是 5 个，现场是 6 个，多了只读的 `/srv/front-claw-private/front-claw-db.env`；
   - `volume.Options` 在历史 audit 和当前 inspect 里都是 null，所以这个分支不成立。
@@ -132,7 +132,7 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
   - 改动：只多接受一个固定的只读 env bind；要求严格 0600、1000:1000、O_NOFOLLOW；其余门禁一项不放松。
   - 测试：`full-host-local-docker.test` **19 pass，chain-positive=1**；pilot 回归 **8 pass**（`patch-review-20261108-v2/input/REPORT.md:33`）。
   - CLI 复核 v2（gpt-6.1-sol high，exit 0）：原 4 项 P2 闭环，没有 P0/P1；新增一项 P2「apply 证据不足」，已用 `delivery-20261108/…-v2-evidence-supplement/`（13de8936）补齐。
-- **box 隔离验证：**
+- **本机隔离验证：**
   - 先装 Docker 26.1.5（`docker-box-20261108-1925/REPORT-success.md`）；
   - 第一轮 daemon 矩阵：五挂载探针出现 MODULE_NOT_FOUND，按门禁停下（`daemon-matrix-20261108-1935/REPORT.md`）；
   - 第二轮矩阵：真实 reader+validator **32 例全部符合预期**，3 个正例接受、29 个反例拒绝（`daemon-matrix-20261108-1944/REPORT.md`）；
@@ -153,19 +153,19 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 - **v4 申请：** 相对 v3 只改了 Node 的绝对路径（`operation-request-20261108-v4.md`，8478b902）。
 - **v4 阶段 1 现场应用：**
   - A/B 换成 v2 的 hash，重新封存，NEW_MARKER `1cb6f544…`，verify 61992 个文件；
-  - 复核结论「有条件通过」（`onsite-v4-apply-20261109-review/REVIEW.md`，**f41f737d…**）；
-  - 收口复核 `FINAL-REVIEW.md`（**536538ec…**）。
+  - 复核结论「有条件通过」（复审记录）；
+  - 收口已复核。
 - 以上记忆里的各个 hash 都已对上。
 
 ### 1.10 observe 门禁与旁支 F1/F2（11-09 16:30–17:49）【文件】
 
 - **observe 草案：** `operation-request-20261109-observe-draft.md`（**ff40c4ce…**）和 `-v2.md`（**c9be40ab…**）。
-- **P1–P7 复核：** 没有全部通过，observe 不能申请（`observe-precheck-20261109-review/REVIEW.md`，**9c1593f1…**）。主因是 env 的 gid=1001，而 validator 要求 1000。
-- **F1 只读核实复核：** `f1-readonly-20261109-review/REVIEW.md`（**fbbc7ab9…**），内容包括 Mem0 的 3 个 systemd 单元，以及 NOTES 的转录错误。
-- **F2 observe-only 驱动草稿：** 草稿 patch 5a8d05ee；复核 `front-claw-observe-only-20261109-review/REVIEW.md`（**d558e115…**）。状态是 parked。
+- **P1–P7 复核：** 没有全部通过，observe 不能申请（复审记录）。主因是 env 的 gid=1001，而 validator 要求 1000。
+- **F1 只读核实复核：** 复审记录，内容包括 Mem0 的 3 个 systemd 单元，以及 NOTES 的转录错误。
+- **F2 observe-only 驱动草稿：** 草稿 patch 5a8d05ee；已复核。状态是 parked。
 - **用户决定（11-09 17:41）：** 跳过 observe 门禁，直接进第 3 步（PLANS.md 第 2 步）。
 
-### 1.11 协作流程（2026-11-09 18:09 起）【文件：`/workspace/front-claw-collab/`】
+### 1.11 协作流程（2026-11-09 18:09 起）【文件：`<本地路径>`】
 
 - **规则来源：** `PLANS.md`（主线 7 步，5f3fa4bb）、`TASK-TEMPLATE.md`（四段式任务单）、`AGENTS.md`（硬规则）、`README.md`（分工）。
 - **复核工具：** `run-review.sh`（a8d84c05）固定用 gpt-6.1-sol、high、不开 fast、只读，输出按 `verdict.schema.json`。
@@ -191,7 +191,7 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 | F-B r4 | 11-09 19:19 | `…-r4.patch` **e313cd3a**（7 个文件，+459/−20） | 子进程 env 冻结成空原型的空对象，堵住 LD_PRELOAD 类注入 | 同上 7 个文件 | 88 项：87 通过；加 7 项对抗测试 | **r4 pass（7×P2）**。REPORT **011aaf5e** | 见下一行 | 已应用（未提交） |
 | live bundle r1–r4 加 r4fix | 11-09 19:45–22:40 | `step3-live-r4-bundle-20261109/`，SHA256SUMS 08c55813 | 01 备份 / 02 应用 / 03 封存 / 04 开窗 / 05 残留检查五段式现场包，做到严格 30 分钟、不删、失败只报 | 01–05 脚本 | dryrun | r1 fail（11×P1）、r2 fail（5×P1）、r3 fail（3×P1）、r4 fail（2×P1）。r4fix 没有复核，用户 22:17 原话「先跑起来再说 别漂移一直修」（`task/CHANGES-r4fix.md`） | **`e7be7b70`**（11-09 22:43）：S1–S3 OK，NEW_MARKER 19ac232e；没到 READY（STOP_AT=wait-ready），`CLEANUP_UNKNOWN`；05 CLEAN | 已应用 |
 | r5 | 11-09 23:12 | `step3-r5-store-host.patch` **125d9024** | r4 失败的根因：受控真实模式下，构造期同步执行 assemble 时 storePort 还没赋值，必然抛 `FRONT_CLAW_DATABASE_UNAVAILABLE_URL`。这是代码顺序问题。另外 worker 注入 `FRONT_CLAW_DATABASE_HOST` | `wecom-bot-pilot.ts`、`frontagent-controlled-live-worker.mjs` 及其测试、新增 `front-claw-pilot-store.test.mjs` | 94 项：93 通过；对照组复现了现场 | 未复核（`CHANGES-r5.md` 标「未经复核」） | **`ffdd5ee9`**（23:55 D）：先 STOP_AT=disk，后来 S1–S3 OK，marker 3544625f；没到 READY；05 CLEAN | 已应用 |
-| r6 | 11-10 00:22 | `step3-r6-pg-vendor-diag.patch` **e952cead**（122 个 diff） | r5 失败的根因：stage 里没有 `pg` 包，`Client not connected` 只是连带现象。另外加错误分类打印 | 把纯 JS 的 pg 8.13.1 等 12 个包放进 vendor（119 个文件）；entry 加 `classifyOriginalError`；新增测试 | 100 项：99 通过；在 box 上用 PG17 跑通 migration 007 | 未复核 | **`26e0d23c`**（00:51 D，到期 01:23:18）：**首次 S4_READY**，marker 958f6166；到期时 outer-audit failed（关闭两次）；05 CLEAN | 已应用 |
+| r6 | 11-10 00:22 | `step3-r6-pg-vendor-diag.patch` **e952cead**（122 个 diff） | r5 失败的根因：stage 里没有 `pg` 包，`Client not connected` 只是连带现象。另外加错误分类打印 | 把纯 JS 的 pg 8.13.1 等 12 个包放进 vendor（119 个文件）；entry 加 `classifyOriginalError`；新增测试 | 100 项：99 通过；在本机上用 PG17 跑通 migration 007 | 未复核 | **`26e0d23c`**（00:51 D，到期 01:23:18）：**首次 S4_READY**，marker 958f6166；到期时 outer-audit failed（关闭两次）；05 CLEAN | 已应用 |
 | r7 | 11-10 13:29 | `step3-r7-expiry-close.patch` **d12c0499** | r6 的根因：到期时 pool 被 `end()` 两次，正常到期被误判为失败。另外让 BIZ 计数可见 | `wecom-bot-pilot.ts` 和 `performance-open.ts` 的 close 改成幂等；entry 加结束 token；新增 `front-claw-expiry-close.test.mjs` | 104 项：103 通过 | 用户 13:18 授权不做 CLI 复核 | **`0fd35464`**（13:59 D，到期 14:31:48）：READY，`BIZ request_admitted=4`，`expired_clean`，outer-audit passed；但 runner 接网竞态，**没有最终回复**（截图 wangyijun-1414.jpg） | 已应用 |
 | r8 | 11-10 14:26 | `step3-r8-runner-db-attach.patch` **c1fc7ede** | r7 的根因：`network connect` 抢在容器创建前执行，报「No such container」，接着 slot 泄漏、没有最终回复 | `controlled-real-container-transport.mjs` 改成有界等待后接网，slot 一定释放；worker 加 onRunnerFailure 和 fallback「处理失败，请稍后重试。」；pilot 加 notifyFailure 和 `front_claw_handled` | 120 项：119 通过 | 未复核（证据未找到复核记录） | **`3704c8fb`**（15:09 D，到期 15:40:05）：**`FINAL_REPLY admitted=4 runner_turns=3 final_delivery=3`**，fallback 0，3×DB_NETWORK_ATTACHED，passed，CLEAN。Front Claw 回复仍是桩「Front Claw 在。」 | 已应用 |
 | r9 | 11-10 16:17 | `step3-r9-front-claw-model.patch` **4eb90f2a**；bundle tgz **ac56c45c** | 把进程内桩模型换成真模型 deepseek-flash，复用现有凭据接线，key 每次现读、不记录。超时 ≤12 秒，失败回 fallback；按 tier 配工具，员工 3 个、店长 7 个、老板 8 个 | `wecom-bot-pilot.ts`（`createFrontClawModel`）、`frontagent-controlled-pilot.mjs`（+2）、worker（+3），加 10 个测试 | 130 项：129 通过 | 未复核 | **`6d2c609d`**（17:42 D，到期 18:14:07）：marker **d05d316c**，READY；**零流量**，inbound=0、model_call=0；`expired_clean`（`step3r9-zero-analysis-20261110/REPORT.md`，878b8ed4） | **现场当前版本**（未提交） |
@@ -202,7 +202,7 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 各行证据：
 - 补丁：`E/step3-fix-*/`；
 - 改动说明：`E/step3-live-r*-bundle-*/task/CHANGES-r*.md`；
-- 复核：`/workspace/front-claw-collab/runs/*/verdict.json`；
+- 复核：`<本地路径>`；
 - 现场：`E/step3r*-live-*/`、`E/step3r9reopen-live-20261110/`、`E/step4A-live-20261110/`。step4A 的 18 个文件与 zip d4fc9152 逐一 cmp 一致。
 
 **补充说明：**
@@ -231,8 +231,8 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 
 - 模型失败分类和 fallback：r9 用假 fetch 测了 10 例。现场没有发生过失败（step4A failed=0）。
 - runner 失败 fallback：r8 测试覆盖；现场 fallback_sent=0。
-- 草稿认领幂等、`确认预约 N` 锁定列表、通知状态分开记录：PR #35 自报 23+21+8 项，Codex牙 没复跑。
-- 挂载门禁的 32 例矩阵和六挂载 observe：box 隔离 daemon。
+- 草稿认领幂等、`确认预约 N` 锁定列表、通知状态分开记录：PR #35 自报 23+21+8 项，助手B没复跑。
+- 挂载门禁的 32 例矩阵和六挂载 observe：本机隔离 daemon。
 - 老板映射：r10 草稿测试，134 项中 133 通过。
 
 ### 3.3 仅代码存在（没有现场实证）
@@ -293,28 +293,28 @@ PR 状态：**open，未合并**。共 6 个 commit、47 个文件，+5916/−49
 
 ## 5. 找不到证据或只是推断的地方
 
-1. Codex牙 自己的历史会话无法检索。CLI 安装、astra 审查的准确时间，只能看文件 mtime，或者牙牙会话里没有时间戳的转引。
+1. 助手B自己的历史会话无法检索。CLI 安装、astra 审查的准确时间，只能看文件 mtime，或者助手A会话里没有时间戳的转引。
 2. 「冻结 v2 静态网络绑定（申请前 / 获准创建后）」：只在 `operation-request-20261108*.md` 里找到网络绑定段落，没有逐字核对，**部分仅记忆**。
 3. astra 审查用的模型名，review.txt 里没有记录（仅记忆）。
-4. PR #35 的测试数是 PR 正文自报的，Codex牙 没复跑。PR 的 CI 状态没查。
+4. PR #35 的测试数是 PR 正文自报的，助手B没复跑。PR 的 CI 状态没查。
 5. r5–r9 没有 CLI 复核记录：usage-ledger 最后一条是 11-09 21:58，属于「证据未找到」。r7 有用户 13:18 的授权；r5、r6、r8、r9 只在 CHANGES 里标「未复核」。
 6. r8 及以后的 runner 回复正文、15 秒时延，没有服务端逐条日志，只能看截图（DV-29）。
 7. 测试员工A displayName 为空的原因（PR-03）和删卷后旧 SQLite 丢失（DV-19），都是推断。
 8. 窗口 A 的 PG 计数只覆盖 21:03:49–21:39:51；测试数据还没清理。
-9. 「Front Claw 产品×架构对齐」群里产品经理牙和 ai 架构师牙的回复：证据未找到。
-10. 「云端 5.6 Sol 因额度被拒」只有牙牙会话（pos 1438），没有平台日志文件。
+9. 「Front Claw 产品×架构对齐」群里产品负责人和架构负责人的回复：证据未找到。
+10. 「云端 5.6 Sol 因额度被拒」只有助手A会话（pos 1438），没有平台日志文件。
 
 ---
 
 ## 6. 本次用到的主要依据（sha256 前 8–16 位）
 
 - **仓库：**
-  - `/workspace/qa2`，HEAD 867c179；
-  - `/workspace/r9src/repo`，浅克隆 f2a8105，只读；
+  - `<本地路径>`，HEAD 867c179；
+  - `<本地路径>`，浅克隆 f2a8105，只读；
   - PR #35 和 commit `f2a8105`、`95467af` 的文件清单【GitHub 只读】。
 - **前史文件：**
-  - `/workspace/codex-plan-review/plan.txt` 3083a85a、`review.txt` da4add23；
-  - `/workspace/front-claw-collab/` 下 PLANS.md 5f3fa4bb、AGENTS.md 7475129c、TASK-TEMPLATE.md cfc6e8c0、run-review.sh a8d84c05、usage-ledger.tsv 326f64a9。
+  - `<本地路径>` 3083a85a、`review.txt` da4add23；
+  - `<本地路径>` 下 PLANS.md 5f3fa4bb、AGENTS.md 7475129c、TASK-TEMPLATE.md cfc6e8c0、run-review.sh a8d84c05、usage-ledger.tsv 326f64a9。
 - **现场包：**
   - r7 tar d1beff0b；
   - r8 tgz 4ef59054；

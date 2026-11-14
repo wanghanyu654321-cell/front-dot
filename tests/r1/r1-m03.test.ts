@@ -6,7 +6,7 @@ import { MemorySql } from '../role-eval/sql-fixture.js';
 import { createPostgresPerformanceStore, migratePerformance } from '../../src/role-eval/performance-postgres.js';
 import { MemoryPerformanceStore } from '../../src/role-eval/performance-store.js';
 
-/** R1 复现测试（由 Codex牙 audit-m03-revocation 反例取反）：修前失败、修后通过。 */
+/** R1 复现测试（由 助手B audit-m03-revocation 反例取反）：修前失败、修后通过。 */
 type W = Awaited<ReturnType<typeof world>>;
 const revoke = async (w: W, id: string) => {
   const next = policy(2); next.members[id]!.status = 'revoked';

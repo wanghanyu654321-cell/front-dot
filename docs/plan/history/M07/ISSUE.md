@@ -3,13 +3,13 @@
 来源：MERGED.md §M07（PR-09/12/15/24，DV-05/08/20/32；诉求③④⑥）。基线：M06 树 5839f303（repo-m06）。
 
 ## 现状（实测，不是推断）
-- 本机有 OpenDot 源码：`/workspace/uploads/od/OpenDot`（来自 `/workspace/uploads/OpenDot.zip`，sha256 `6ad0c734…ce49`，**没有 .git，拿不到 O 的提交 SHA**；无 node_modules，不能在本机跑它的类型检查/测试）。只读使用，不改。
+- 本机有 OpenDot 源码：`<本地路径>`（来自 `<本地路径>`，sha256 `6ad0c734…ce49`，**没有 .git，拿不到 O 的提交 SHA**；无 node_modules，不能在本机跑它的类型检查/测试）。只读使用，不改。
 - OpenDot 没有企微渠道：`src/im-channel.ts` 的工厂只有飞书/Telegram/QQ/微信/钉钉/Discord/WhatsApp。MERGED 非目标也写明不改企微 IMChannel → 企微长连接留在 Front Claw。
 - OpenDot 没有宿主侧插件/扩展加载点：`src/index.ts`（22427 行）`main()` 里所有宿主服务都是写死的 `startXxxService()`，关停在 `shutdown()` Phase 1 里 `close()`（例：`startBotHandoffService` 20621 行 → 20713 行 `botHandoffs.close()`）。Plugin/MCP 机制是给 Agent Runner 用的，不是宿主服务。→ 按 MERGED「未找到受支持扩展点时先评审最小底座差异，不假装纯旁路已接通」：给出最小 OpenDot 差异（新增 1 个文件 + index.ts 3 处），**不应用到任何 OpenDot 目录**，只在临时副本上验证可打上。
 - OpenDot goal-run：`src/personal-agent/goal-runtime.ts:36` `requestId = goal-run:${claim.id}`，只处理 `task-scheduler` 领取的 SQLite `scheduled_tasks`（`claim.definition_snapshot.personal_goal`）。Front Claw 业务任务（报数/预约/通知出站箱）都在 Front Claw 自己的 PG 里，不进 OpenDot 调度表 → goal-run 天然领不到；需要测试证明适配器不往宿主调度器注册任何东西。
 - OpenDot Mem0：`src/mem0-private-config.ts` 按主人/Dot 开关，默认全关；`docs/mem0-owner-private.md` 写明渠道来源不进 Mem0。Front Claw 不提交 OpenDot Product Input，不会触发。
 - Front Claw 现有生产入口 `wecom-bot-pilot.ts` 绑死旧 Native 宿主（`initializeExecution` 队列/BootGate、`readNative` 读 Native 用户库）。OpenDot 里没有这些。M03 已在 handler 留了 `platformCapabilities`（注释“M07 接入前不传”）。
-- Fable 的 `integrations/opendot-front-claw/`（迁移总结 03 目录）是 98 行骨架：布尔准入 `admission-shim`、进程内 Map 的 `task-dedup`、`mem0-off`。MERGED 计划③要求替换布尔准入/Map 保障，只沿用目录形状、导出与 Mem0 关闭声明。
+- 早期方案的 `integrations/opendot-front-claw/`（迁移总结 03 目录）是 98 行骨架：布尔准入 `admission-shim`、进程内 Map 的 `task-dedup`、`mem0-off`。MERGED 计划③要求替换布尔准入/Map 保障，只沿用目录形状、导出与 Mem0 关闭声明。
 
 ## 范围
 1. 契约：适配器需要 OpenDot 提供什么（日志、生命周期 close、环境变量），每项标注 OpenDot 源码出处；没出处的标“假设”。

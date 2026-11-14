@@ -1,10 +1,10 @@
 # R13 报告（默认政策 C，D139 修订 + 补充 + D140 可切换 A/B）
 
-时间均为 Asia/Singapore（UTC+8）。本轮含产品经理牙对 D139 的补充，于 2026-11-13 00:24–00:29 改完并重新冻结，取代此前树 `e372d865c5d7591fb14cd4af0baed0dda2125f3a`。未 commit、未 push、未部署、未连真实企微、未调真模型、未读环境变量与凭证、未用 sudo、未删数据、未碰共享库 `legacy-shared-pg-20261008-r1`。未读盲测留出集（blind4–blind10 及其 ctx）与任何 REVIEW.md。未改 HANYU-DECISIONS-20261112.md（产品经理牙自行追加；本轮未写）。不宣称门③/门④达标。
+时间均为 Asia/Singapore（UTC+8）。本轮含产品负责人对 D139 的补充，于 2026-11-13 00:24–00:29 改完并重新冻结，取代此前树 `e372d865c5d7591fb14cd4af0baed0dda2125f3a`。未 commit、未 push、未部署、未连真实企微、未调真模型、未读环境变量与凭证、未用 sudo、未删数据、未碰共享库 `legacy-shared-pg-20261008-r1`。未读盲测留出集与任何复审记录。未改 HANYU-DECISIONS-20261112.md（产品负责人自行追加；本轮未写）。不宣称门③/门④达标。
 
 ## 树与补丁
 
-- 工作树：`<WORKSPACE>/fc-migration/repo-r13`，HEAD 仍为 G `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。由 R12 树 `bc1116954e0606e1bcca92bcc5948f5fe84c6404`（543 路径）起做。
+- 工作树：`<本地路径>`，HEAD 仍为 G `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。由 R12 树 `bc1116954e0606e1bcca92bcc5948f5fe84c6404`（543 路径）起做。
 - **R13 冻结树** `d0cd0c8e2e8bf74fc3a64df2f41c45414227b5f5`，**553 路径**（+10，无删除）。经临时 `GIT_INDEX_FILE`，`git add -A -- . ':!node_modules' ':!dist'` 后 `git write-tree`，不改 HEAD、不 commit。此树取代 `e372d865…`。
 - **r13.patch**（R12→R13）：1766 行，15 文件，+1554 / −11。sha256 `b6e739fe323ae864615508ba772b1c90597b5765c360df1d7aacafa29d4766eb`。
 - **r13-cumulative.patch**（G→R13）：28612 行。sha256 `70957a82484f51a8c016326137f48d7d4be38626656d261d88cd1372ece7f99d`。
@@ -29,7 +29,7 @@
    - D131 仍只看 **本店、今天、已确认** 的账本行：`listEntries({ storeId: actor.storeId, businessDay: report.businessDay, status: 'confirmed' })`，再过滤 `status === 'confirmed' && storeId && businessDay`。
    - 不含未确认草稿、不含其它店、不含其它营业日、不含作废单。
    - 因此：回「是」+「对」入账后，**同一天**再报同名仍走 **二选一**（可确认的选择草稿，不是「是新客户」追问）；**隔日**再报则名单已从上一营业日已确认单认出，且不占今天 D131，**直接出普通报单草稿**。历史标准行种子写入 2026-11-11，同样不触发今天的 D131。
-5. **历史客户名标准行种子**：一条种子等价于在上一营业日 2026-11-11 用标准行「客户名：金额（员工）」报入并回「对」之后的已确认记录，经 `insertEntries` 写入，不走今天的员工入口。冻结名单见 `tests/r13/fixtures/historical-customers.json`（产品点名五人 + 锁定集 blind1+blind3 解析名）。
+5. **历史客户名标准行种子**：一条种子等价于在上一营业日 2026-11-11 用标准行「客户名：金额（员工）」报入并回「对」之后的已确认记录，经 `insertEntries` 写入，不走今天的员工入口。冻结名单见 `tests/r13/fixtures/historical-customers.json`（产品点名五人 + 锁定集解析出的客户名）。
 6. **门①**：新客户首报追问从分母拿出单独报数。门②以可确认草稿为执行。
 7. 自编测试补了：回「是」不回「对」再报要再问；回「是」「对」后作废，名字不再已知；别的店已确认的名字本店仍要问；回「是」「对」入账后隔日再报直接出草稿。另记同一天再报走 D131 二选一（口径不变）。
 
@@ -39,7 +39,7 @@
 - **完整单元**：2 failed | **1442 passed** | 3 skipped（共 1447）。失败仅两个已知 `tests/native/live-model-smoke.test.ts`。耗时 11.80s（2026-11-13 00:27:21 Asia/Singapore 起）。
 - **test:pg 三次**（`AUDIT_PG_ALLOW=isolated-synthetic`，`AUDIT_PG_URL=postgres://frontclaw@127.0.0.1:55432/postgres`）：均为 **21 个文件、95/95 全绿**（25.51s / 23.95s / 25.59s）。结束后已停 pg-temp，55432 已关闭。未碰共享库。
 - **完整突变 15/15 全部杀死并恢复**：R11 原 7 条（M7 仍为「Tests no tests」、exit≠0 计杀死）+ R12-M1/M2/M3 + R13-M1 去掉「客户：X」+ R13-M2 政策 C 对未知也放行 + R13-M3 把「对」当成「是」+ **R13-M4 回「是」就把名字写入名单**（取消后再报不再追问，4 个测试杀死）+ **R13-M5 作废的单仍留在名单里**（撤回后同名不再追问，该测试杀死）。
-- **门①锁定独立再跑**（`tests/r8/r8-gate1-lock.test.ts`，r2 harness）：**A、B、C 均为 54/56，例外仅 C112、C113**。新客户首报追问 0（锁定集几乎都是姓＋称谓）。
+- **门①锁定独立再跑**（`tests/r8/r8-gate1-lock.test.ts`，r2 harness）：**A、B、C 均为 54/56，例外仅相关评测条目**。新客户首报追问 0（锁定集几乎都是姓＋称谓）。
 
 ## 评测 A / B / C
 
@@ -48,5 +48,5 @@
 ## 未做
 
 - 可选的装配竞态测试侧修补：未做。
-- 未向 HANYU-DECISIONS 追加（按产品经理牙要求，本轮不写）。
+- 未向 HANYU-DECISIONS 追加（按产品负责人要求，本轮不写）。
 - 不宣称门③/门④达标。

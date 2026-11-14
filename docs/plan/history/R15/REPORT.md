@@ -1,12 +1,12 @@
 # R15 报告
 
-时间均为 Asia/Singapore（UTC+8）。本轮于 2026-11-13 01:40 按 D144 与转向完成并冻结。未 commit、未 push、未部署、未连真实企微、未调真模型、未读环境变量与凭证、未用 sudo、未删数据、未碰共享库 `legacy-shared-pg-20261008-r1`。未读盲测留出集（blind4–blind11 及其 ctx、映射）与任何 REVIEW.md、RESUME。未改 `HANYU-DECISIONS-20261112.md`（开本改动时 sha 已是 `537f06202f0e169d30897031bd8a7f64e406f156d9dc8c49f4fb56dcef81d52f`，只核对、未写；D144 已由产品经理牙写入，本轮新 D 号从 D145 起，只记在本报告）。不宣称门③/门④达标。
+时间均为 Asia/Singapore（UTC+8）。本轮于 2026-11-13 01:40 按 D144 与转向完成并冻结。未 commit、未 push、未部署、未连真实企微、未调真模型、未读环境变量与凭证、未用 sudo、未删数据、未碰共享库 `legacy-shared-pg-20261008-r1`。未读盲测留出集（含 ctx 与映射）与任何复审记录、续跑记录。未改 `HANYU-DECISIONS-20261112.md`（开本改动时 sha 已是 `537f06202f0e169d30897031bd8a7f64e406f156d9dc8c49f4fb56dcef81d52f`，只核对、未写；D144 已由产品负责人写入，本轮新 D 号从 D145 起，只记在本报告）。不宣称门③/门④达标。
 
 本轮目标（转向后）：门②保持 0；纯标准行不退化；没见过的说法一律先问。第 2 档「带时间词的否定补报前缀、逗号、已知客户全名、冒号、金额」不改成快通道；桩追问写得更具体（是不是要报这位客户的单），不出可确认草稿。D143 / D131 / 评测回放未改。「是新客户 X 吗」非名字词体验按 D144 不影响准入，本轮未做。
 
 ## 树与补丁
 
-- 工作树：`<WORKSPACE>/fc-migration/repo-r15`，HEAD 仍为 G `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。由 R14 冻结树 `336c658ad6173f23ebf27c27aa3fc59f5278b327`（558 路径）起做，加载后 write-tree 已核对该哈希。
+- 工作树：`<本地路径>`，HEAD 仍为 G `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。由 R14 冻结树 `336c658ad6173f23ebf27c27aa3fc59f5278b327`（558 路径）起做，加载后 write-tree 已核对该哈希。
 - **R15 冻结树** `accdfb1e231b0b1ab2a2f1e196f3f51e3cbe905e`，**564 路径**（+6，无删除：两个新模块、四个测试文件）。经临时 `GIT_INDEX_FILE`，先 `rm` 再 `git read-tree --empty`，`git add -A -- . ':!node_modules' ':!dist'` 后 `git write-tree`，不改 HEAD、不 commit。
 - **r15.patch**（R14→R15）：985 行，11 文件，+800 / −9。sha256 `14bebe585c212fd6d53781dfb18b57dc00eda4cf98c280d4150ebe8963cb7c9c`。
 - **r15-cumulative.patch**（G→R15）：29899 行。sha256 `98c4af6679568ec80c3b782044aea6d435393a9a4245b14c8cbd4ce7f44711d5`。
@@ -47,11 +47,11 @@
 - **完整单元**：2 failed | **1486 passed** | 3 skipped（共 1491）。失败仅两个已知 `tests/native/live-model-smoke.test.ts`。耗时 10.86s（2026-11-13 01:37:57 Asia/Singapore 起）。
 - **test:pg 三次**（`AUDIT_PG_ALLOW=isolated-synthetic`，`AUDIT_PG_URL=postgres://frontclaw@127.0.0.1:55432/postgres`，`FRONT_CLAW_PG_BIN` 指向 pg-temp 17）：均为 **22 个文件、97/97 全绿**（22.19s / 22.28s / 23.24s）。结束后已停 pg-temp，55432 已关闭。未碰共享库。
 - **完整突变 21/21 全部杀死并恢复**：R11 原 7 条（M7 仍为「Tests no tests」、exit≠0 计杀死）+ R12 3 条 + R13 5 条 + R14-M1 / R14-M3 / R14-M4 + **R15-M1 关掉结构进度判断**、**R15-M2 关掉未见过否定补报先问**、**R15-M3 关掉客户名残片检测**。
-- **门①锁定独立再跑**（`tests/r8/r8-gate1-lock.test.ts`，`CUSTOMER_NAME_POLICY_MODE` 分别 A/B/C）：**A、B、C 均为 54/56，例外仅 C112、C113**。
+- **门①锁定独立再跑**（`tests/r8/r8-gate1-lock.test.ts`，`CUSTOMER_NAME_POLICY_MODE` 分别 A/B/C）：**A、B、C 均为 54/56，例外仅相关评测条目**。
 
 ## 未做
 
 - 未改 D131、未改评测回放、未改 D143 文案与行为。
-- 未向 HANYU-DECISIONS 追加（D145–D147 只写在本报告，待产品经理牙确认）。
+- 未向 HANYU-DECISIONS 追加（D145–D147 只写在本报告，待产品负责人确认）。
 - 「是新客户 X 吗」非名字词体验未做（D144：不影响准入）。
 - 不宣称门③/门④达标；门②未在本轮对官方留出集自评（实现上未见过的否定补报与残片不出可确认草稿；纯标准行与锁定 54/56 未退化）。

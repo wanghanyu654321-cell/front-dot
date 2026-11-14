@@ -6,9 +6,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { operationIdFor } from '../../src/opendot/adapter.js';
 import { manualClock, memoryWorld, offlineChannels, opIdOf } from './fixture-m07.js';
 
-const OPENDOT = process.env.OPENDOT_SRC ?? '/workspace/uploads/od/OpenDot';
+const OPENDOT = process.env.OPENDOT_SRC?.trim() ?? '';
 const PATCH = path.resolve('integrations/opendot-front-claw/opendot-hook.patch');
-const haveOpenDot = existsSync(path.join(OPENDOT, 'src/index.ts'));
+const haveOpenDot = OPENDOT !== '' && existsSync(path.join(OPENDOT, 'src/index.ts'));
 let dir = '';
 type Hook = typeof import('../../integrations/opendot-front-claw/opendot-src/front-claw-hook.js');
 let hook: Hook;

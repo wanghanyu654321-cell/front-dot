@@ -27,7 +27,7 @@
 - **intent-router.ts**：口语预约（有客人/称呼信号 + 时间/日期、无营销词）→ appointment，并压过报数；「我的预约」等查询词。
 - **wecom-bot-unified-handler.ts**（旧入口）：员工入口的预约草稿也让回本人入口，旧路径不会确认/取消它；旧入口自己的 pending_manager 流程未动。
 - **测试**：appointment-m05 17 项、intent-m05 3 项、appointment-pg-m05 8 项；fixture appointment-fixture-m05；sql-fixture 支持 `INSERT … RETURNING`（冲突返回空）；access-fixture-m03 的 spy 遇到不可克隆参数（带函数的提交选项）记 '[uncloneable]'（之前直接抛错，导致 12 项假失败）。
-- **语料**：M05 盲测 27 条（sha 1c64f70b…）在改分类器前冻结，首跑 13/27（blind-m05-first-run.txt）；调参集按文本追加 13 条（共 84）。盲测与调参、与 M02/M04 盲测都不重叠。
+- **语料**：M05 盲测 27 条在改分类器前冻结，首跑 13/27（留出测试集产物）；调参集按文本追加 13 条（共 84）。盲测与调参、与 M02/M04 盲测都不重叠。
 
 PM 要求对照：
 - 「明天三点有个客人要来」→ 预约流程（单元 + 入口端到端，不回澄清，营销端口零调用）。

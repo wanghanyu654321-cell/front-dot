@@ -1,7 +1,7 @@
 # R3a ISSUE（2026-11-12，UTC+8）
 
 起点：R3 树 `9ecf70526275b989ded98922c711efe22ba1d093`；基线 G = `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。
-工作树：`<WORKSPACE>/fc-migration/repo-r3a`。产物放 `<WORKSPACE>/fc-migration/R3a/`。repo-r3 冻结，不动。
+工作树：`<本地路径>`。产物放 `<本地路径>`。repo-r3 冻结，不动。
 
 | # | 要做 |
 |---|---|

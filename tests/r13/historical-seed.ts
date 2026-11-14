@@ -7,7 +7,7 @@
  * 这样既不会触发今天的 D131 二选一，也不会在政策 A 下被「是新客户」拦住而种不上。
  *
  * 冻结名单见 fixtures/historical-customers.json：含产品点名的苏晓禾、小雪、阿玲、李小雪、欧阳娜娜，
- * 以及门①锁定集（gate1-lock-ids.json，仅 blind1+blind3）里 tryStandardReport 能解析出的客户名。
+ * 以及门①锁定集（gate1-lock-ids.json，仅两组早期已公开语料）里 tryStandardReport 能解析出的客户名。
  * 不读盲测留出集，不改语料原句。
  */
 import { readFileSync } from 'node:fs';

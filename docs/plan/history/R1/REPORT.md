@@ -3,7 +3,7 @@
 - 基线 G = `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`；起点 = M08 累积树 `79c86525dcf4cb01d25882871d94069f96a0f7ce`
 - **R1 新树 = `6318188d4a7451121a86174015fe83203c296521`**（repo-r1 `git add -A && git write-tree`，未 commit、未 push）
 - 产物：`r1.patch`（对 M08 树，39 文件，+1848/−319）、`r1-cumulative.patch`（对 G，100 文件，+11144/−130）、`changed-files.txt`、`r1-tree.txt`、`SHA256SUMS`；两份 patch 均已 `git apply --check -R` 通过。
-- 未连服务器/企微/共用 PG（legacy-shared-pg-20261008-r1），未执行 M08 REPORT §5 命令，未读 env/凭据，未删数据；repo、repo-m0x、audit/ 未改动。
+- 未连服务器/企微/共用 PG（legacy-shared-pg-20261008-r1），未执行 M08 REPORT §5 命令，未读 env/凭据，未删数据；repo、repo-m0x、私有审查目录未改动。
 - 所有 PG 证据来自本机临时 PG17 集群（pg-temp），**不是线上 PG 版本**。
 
 ## §0 本轮新增/变更默认值（自 D63 起）
@@ -51,7 +51,7 @@
 | R1-M07-P2-1 activate 部分失败 | 回收通道/租约/DB | R1-M07-P2-1 | × | ✓ |
 | R1-M02-1 明确代报被追问 | 快路径（D75） | R1-M02-1a/1b/1c/1d | × | ✓ |
 | R1-M02-2 无兜底分类接口 | intent-classifier.ts + model-config.ts（D76） | R1-M02-2a/2b/2c | × | ✓ |
-| R1-M02-3 盲测分规则/规则+桩统计 | blind-stats-r1.test.ts | blind/blind-summary.json | — | 见 §3 |
+| R1-M02-3 盲测分规则/规则+桩统计 | 读取评测语料的测试 | 留出测试集产物 | — | 见 §3 |
 
 注：修前两项通过（P0-1c、P1-3 memory-store）以及 PG-c1 通过，是因为 M08 已修过对应点，作为回归保留，并非测试无效；它们的有效性由变异 M10 证明。
 
@@ -69,7 +69,7 @@
 | 并发 / 撤权竞态 | a1 用锁做先后，gate 确定性拒绝；a2 跑 20 轮真竞态，本次结果为入账 8 / 预检拒 12 / 门拒 0，每轮都满足「入账 1 笔」或「拒绝 + 零入账 + 草稿待确认」（上一次运行门拒为 1，入账门路径由 a1 和变异 M9 确定性覆盖）；b3 跑 10 轮补发恰一胜；c1 跑 10 轮首写恰一胜；adapter skew 跑 5 轮 |
 | 变异检查 | `mutation-check.py`：11 个变异 **ALL_KILLED**（M1 提交人行、M1b 代报对象、M2 fence 恒真、M3 忽略高水位、M4 发送门沿用预检、M5 缓存不复核、M6 营销不复核、M7 无 NFKC、M8 内存写回无 fence、M9 PG 不锁人员行、M10 锁序不统一） |
 
-## §3 盲测统计（audit/blind-corpus.jsonl，130 条，sha256 0fb36198…8eeb）
+## §3 盲测统计（私有评测语料，130 条）
 
 | 指标 | M08 基线 | R1 规则 | R1 规则+桩 |
 |---|---|---|---|
@@ -93,7 +93,7 @@
 8. 操作号记录（D71）没有保留期和清理。
 9. 008 畸形行需要人工执行 REPAIR 后才能升级（D69）。
 
-## §6 请 Codex牙 重点审查
+## §6 请助手B重点审查
 1. `commit-gate.ts` 的复核顺序和字段是否完整（memberId 换绑、tier、门店、代报对象），以及 `configLockOrder` 在三条路径上的锁序一致性和死锁风险。
 2. 营销「生成前后两次过门」与缓存命中 `stillAllowed` 是否还有能绕过门的出口（例如别的回复路径）。
 3. fencing：租约 epoch 在 renew/release 时保留是否安全；通知 `f` 与租约 epoch 是两个计数器但用同一判定 `fenceHolds`，语义是否满足「同一 epoch」的要求。
