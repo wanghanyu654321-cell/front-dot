@@ -1,4 +1,4 @@
-# R17 移交项（交 Codex牙 修复）
+# R17 移交项（交助手B修复）
 
 来源：[history/R17/REPORT.md](history/R17/REPORT.md)「未完成 / 移交 Codex」一节。原文里引用的评测原句在公开版中已删掉，下面只描述现象。
 
@@ -11,4 +11,4 @@
 | 5 | **`BRACKET_NOT_NAME` 是新加的小词表**（只用于括号） | 产品确认能否使用、是否挪进 `config/` 并冻结 | `confirmable-draft-gate.ts` |
 | 6 | **复合口径范围**：目前只有进度、查询和认不出的后半句整句先问；改账、预约、目标、宣传仍是「草稿＋后半句没办」 | 如果产品要求所有复合句都先问，要同时调整锁定集标注和 r4/r10/r11 的相应测试 | `employee-loop.ts`（`shouldHandCompoundToModel`、`compoundKeepsDraft`） |
 
-修完后的复审流程：冻结树 → 公布树哈希和补丁 sha256 → Codex牙先用 blind11、blind12 原样复测，再用 blind13 判准入；blind10 带勘误作回归。test:pg 至少跑 5 次，单独报入账笔数和金额。
+修完后的复审流程：冻结树 → 公布树哈希和补丁 sha256 → 助手B先用旧的留出测试集原样复测，再用新的留出测试集判准入；更早的一组带勘误作回归。test:pg 至少跑 5 次，单独报入账笔数和金额。

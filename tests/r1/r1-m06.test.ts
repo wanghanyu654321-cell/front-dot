@@ -6,7 +6,7 @@ import { decodeStatus, dueRaw, encodeStatus } from '../../src/role-eval/notifica
 import { MemoryPerformanceStore } from '../../src/role-eval/performance-store.js';
 import { STORE_HOURS_KEY } from '../../src/role-eval/store-hours.js';
 
-/** R1 复现测试（由 Codex牙 audit-m06-boundaries 反例取反）。 */
+/** R1 复现测试（由 助手B audit-m06-boundaries 反例取反）。 */
 async function setup() {
   const clock = manualClock();
   const w = await worldM05({ now: clock.now, store: new MemoryPerformanceStore() });

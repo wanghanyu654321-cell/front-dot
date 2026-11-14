@@ -1,6 +1,6 @@
 # M08 报告：两库迁移、重入与保全新业务的回退（仅离线）
 
-时间：2026-11-11 21:00–21:30 北京时间（UTC+8）。工作树 <WORKSPACE>/fc-migration/repo-m08（detached，基于 f2a8105 + M07 累计补丁 = 树 d95be9f0）。没有 commit/push/PR，没有连服务器/ssh/真实企微，没有读 env/凭据，没有 sudo/docker，没有删工作树和临时目录以外的任何东西。
+时间：2026-11-11 21:00–21:30 北京时间（UTC+8）。工作树 <本地路径>，基于 f2a8105 + M07 累计补丁 = 树 d95be9f0）。没有 commit/push/PR，没有连服务器/ssh/真实企微，没有读 env/凭据，没有 sudo/docker，没有删工作树和临时目录以外的任何东西。
 
 ## 1. 改了什么
 - **008 迁移**（`migrations/008_front_claw_delivery.sql` + `.down.sql`，SQL 同时内嵌在 `src/role-eval/schema-migrations.ts`，有逐字一致的测试）：

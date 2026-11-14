@@ -1,16 +1,16 @@
-# Front Claw 产品架构（牙牙侧，PRODUCT-ARCH.md）
+# Front Claw 产品架构（助手A侧，PRODUCT-ARCH.md）
 
 > 编写：2026-11-10 北京时间（UTC+8）。只读整理：没有连服务器，没有读 env 或凭据，没有提交。
 >
 > **依据**
-> - 源码：`/workspace/r9src/repo`，HEAD 是 `f2a8105`，工作区干净，也就是**仓库版**。
+> - 源码：`<本地路径>`，HEAD 是 `f2a8105`，工作区干净，也就是**仓库版**。
 > - 现场版：在仓库版上叠加 C、E、r5–r9 补丁，marker 是 `d05d316c…`。补丁文件在 `E/step3-fix-*`。
 > - 问题登记：`E/issue-register-20261110/PRODUCT.md`（PR-xx）、`DEV.md`（DV-xx）。
 > - 老板能力：`E/productization-issues-20261110/OWNER-CAPABILITIES.md`。
-> - 开发总结：`E/dev-summary-20261110/CODE-CHANGES.md`（牙牙，编号 A1–J）和 `DEV-SUMMARY.md`（Codex牙）。
+> - 开发总结：`E/dev-summary-20261110/CODE-CHANGES.md`（助手A，编号 A1–J）和 `DEV-SUMMARY.md`（助手B）。
 >
-> 简写 `E/` = `<WORKSPACE>/front-claw-evidence/`。行号指仓库版 f2a8105，除非注明是 r9。
-> 标注：**已证实**＝源码、日志或截图能直接对上；**推断**＝能解释现象，但没有核对；**未找到证据**＝box 上没有材料。
+> 简写 `E/` = `<证据目录>/`。行号指仓库版 f2a8105，除非注明是 r9。
+> 标注：**已证实**＝源码、日志或截图能直接对上；**推断**＝能解释现象，但没有核对；**未找到证据**＝本机上没有材料。
 
 ---
 
@@ -82,7 +82,7 @@ flowchart LR
 ### 2.1 老板最后能看什么（PR-06、PR-07）
 - **接入以后能用**：全部 8 个工具。真正跨店的只有「门店排名」和「给任意门店的人设目标」。另外会收到本店推送（预约待确认、改删金额、「（评测原句已删）」争议），前提是 PG 人员表里她的 tier 是 manager 或 owner（`unified-handler:180-183`）。
 - **还看不到**：其他门店的汇总和未报名单（不能发「汇总 B店」）；跨店明细和按区间的报表；导出和文件（功能关闭，`assistant-commands.ts` 的 `isClosedCommand`）；旧 SQLite 账本里的数据（PR-09）。
-- **要让老板能看，迁移里要做的**：tier=owner 加可见门店集合；汇总、未报、确认预约加门店参数；自然语言先进 Front Claw；只留一套 PG 账本（OWNER-CAPABILITIES §3）。测试员工A的企微 accountId 和 memberId：**未找到证据**，box 上只有脱敏值。
+- **要让老板能看，迁移里要做的**：tier=owner 加可见门店集合；汇总、未报、确认预约加门店参数；自然语言先进 Front Claw；只留一套 PG 账本（OWNER-CAPABILITIES §3）。测试员工A的企微 accountId 和 memberId：**未找到证据**，本机上只有脱敏值。
 
 ## 3. 功能域与流程
 

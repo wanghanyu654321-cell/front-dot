@@ -1,4 +1,4 @@
-/** 沿用 Fable 骨架 integrations/opendot-front-claw/mem0-off.ts 的声明：Front Claw 一期 Mem0 关闭。 */
+/** 沿用早期骨架 integrations/opendot-front-claw/mem0-off.ts 的声明：Front Claw 一期 Mem0 关闭。 */
 export const MEM0_ENABLED_FOR_FRONT_CLAW = false;
 export const FRONT_CLAW_MEM0_ENV = 'FRONT_CLAW_MEM0';
 

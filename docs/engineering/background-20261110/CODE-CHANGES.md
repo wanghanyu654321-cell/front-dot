@@ -1,13 +1,13 @@
-# Front Claw / OpenDot 代码变更与开发目的汇总（牙牙侧，CODE-CHANGES.md）
+# Front Claw / OpenDot 代码变更与开发目的汇总（助手A侧，CODE-CHANGES.md）
 
 > 编写：2026-11-10 北京时间（UTC+8）。全程只读：没有连接服务器，没有读 env 或凭据文件，没有 commit/push。
 > 时间一律用北京时间。原始材料里标成 "Asia/Singapore" 或 `+0800` 的，与北京时间同为 UTC+8，不再换算。
-> 路径简写：`E/` = `<WORKSPACE>/front-claw-evidence/`；`A/` = `/cursor/stores/user/grok-bot/agents/bc277e59-8d4f-426a-8591-a00ef5cdde15/assets/`（牙牙会话保存的补丁和日志附件）。
+> 路径简写：`E/` = `<证据目录>/`；`A/` = 私有附件目录（助手A会话保存的补丁和日志附件）。
 > 口径：
 > - 每一项都按 **改了什么 / 为什么改（症状或目标）/ 动了哪些文件 / 怎么验证的 / 现在的状态** 来写。
 > - 找不到原始证据的，写「**未找到证据**」。只能靠时间顺序或测试名推断的，写「**推断**」。
 > - 对话转录在本次任务里读不到（SearchTranscripts 返回 "no record"）。所以凡是只出现在父会话待办摘要里的数字（例如测试条数），都注明「来源：父会话摘要」。
-> - 分工（`/workspace/front-claw-collab/README.md`）：A 段早期业务补丁由云端 agent 产出（日志路径是 `/agent/repos/qiwe-agent`、`<ARTIFACTS_DIR>`）。11-08 起，边界补丁和 step3 r 系列由 **Codex牙** 修复和打包，**牙牙** 经用户 Windows 机 SSH 在现场执行。下文不逐项署名，除非材料里写明。
+> - 分工（`<本地路径>`）：A 段早期业务补丁由云端 agent 产出（日志路径是 `<本地路径>`、`<ARTIFACTS_DIR>`）。11-08 起，边界补丁和 step3 r 系列由 **助手B** 修复和打包，**助手A** 经用户 Windows 机 SSH 在现场执行。下文不逐项署名，除非材料里写明。
 
 ---
 
@@ -120,7 +120,7 @@
 - **状态：** 进入 A7。
 
 ### A7 PR35 提交 `f2a8105`
-- **事实：** `/workspace/r9src/repo` 的 git log 头是 `f2a8105 fix: keep store confirms idempotent and read env-file in the client`。PLANS.md 第 2 步写的是「commit/push 完成：PR35 @ f2a8105a」。父会话摘要另记「普通推送 f2a8105acf84… 至 PR35，远端一致，工作区干净，未合并部署，CI 未见检查」。
+- **事实：** `<本地路径>` 的 git log 头是 `f2a8105 fix: keep store confirms idempotent and read env-file in the client`。PLANS.md 第 2 步写的是「commit/push 完成：PR35 @ f2a8105a」。父会话摘要另记「普通推送 f2a8105acf84… 至 PR35，远端一致，工作区干净，未合并部署，CI 未见检查」。
 - **f2a8105 等于 146121 B 补丁的内容：** 这是**推断**，依据是提交说明和时间顺序。两者没有逐文件比对过。
 - **状态：** **已推送（PR35），未合并，未部署。** 之后 r 系列的所有改动都**没有**再提交。
 
@@ -144,15 +144,15 @@
   - v2 修好的 sha：A=`d7f8a8d0…`，B=`7a9c9e40…`。
 - **验证：**
   - CLI 复核：v1 有 4 项 P2，v2 结论是「有条件」通过，没有 P0/P1（`patch-review-20261108*/final-answer.md`）；
-  - box 上的验证：Docker 隔离矩阵 32 例（3 正 29 负）；完整 observe 入口在 5 挂载和精确 6 挂载下各 exit 0；6 挂载＋受控 pilot bridge 得到 `FULL_OBSERVE_ACCEPT`。这三项见 `daemon-matrix-*`、`observe-entry-20261108-2005`、`pilot-six-observe-20261108-2202`。
+  - 本机上的验证：Docker 隔离矩阵 32 例（3 正 29 负）；完整 observe 入口在 5 挂载和精确 6 挂载下各 exit 0；6 挂载＋受控 pilot bridge 得到 `FULL_OBSERVE_ACCEPT`。这三项见 `daemon-matrix-*`、`observe-entry-20261108-2005`、`pilot-six-observe-20261108-2202`。
   - 说明：`daemon-matrix-20261108-1944/assembly-diagnosis-and-fix.md` 只改了**测试装配**，不再用 docker exec 承载 reader，产品逻辑没动。
-- **上现场：** 11-09 v4 apply。第一次 S1 因为 node hash 抄录有误停下（NOTES-apply.md），之后补完收口。新 marker 是 `1cb6f544…364d83`（`onsite-v4-apply-20261109-review/FINAL-REVIEW.md`）。0020232f 的 C4 核对里，现场 A 等于 `d7f8a8d0`。
+- **上现场：** 11-09 v4 apply。第一次 S1 因为 node hash 抄录有误停下（NOTES-apply.md），之后补完收口。新 marker 是 `1cb6f544…364d83`（复审记录）。0020232f 的 C4 核对里，现场 A 等于 `d7f8a8d0`。
 - **状态：** v2 **未提交**（仓库 f2a8105 里仍是原版 blob `12b74a3b…`），**只在现场**。
 
 ## D. observe-only 驱动（11-09，`5a8d05ee…`）
 - **改了什么：** 新增 3 个文件：`observe-only-driver.mjs`、`observe-only-launcher.mjs`、`observe-only.test.mjs`。容器 PID1 调用 `createRestorationSupervisorReceipt`，跑完 observe 后写证据就退出，不连库，也不进入 live-entry。
 - **为什么：** 打算在真实启动前，先单独过一次现场 observe 门禁。
-- **验证：** `test.log` 在 box 上跑过；CLI 复核见 `front-claw-observe-only-20261109-review/`。
+- **验证：** `test.log` 在本机上跑过；CLI 复核见 `front-claw-observe-only-20261109-review/`。
 - **状态：** **未提交，没上现场。** 用户 11-09 17:41 决定跳过 observe 门禁，PLANS.md 把它记为旁支 F2 parked。
 
 ## E. F-B host-db-endpoint 补丁（step3，第 1 至第 4 轮）
@@ -161,7 +161,7 @@
   - A 文件只在 receipt v3 加上调用方显式 `allowFixedDbNetwork` 时，才接受「固定 DB 网 ID＋pilot 网」双网，并要求 ID、Driver、Scope、Ingress、EndpointID、MAC 全部吻合；observe 阶段仍只允许单网；
   - boundary.ts 在双网时要求网卡恰好是 eth0、eth1、lo，且 MAC 集合与端点一致；
   - entry 新增 `withDatabaseNetwork`：只要异常能展开，就保证断网，而且原始错误优先保留。
-  - box 测试 70 例：69 通过，1 跳过；负对照 6 例失败。CLI 复核做到第 2 轮仍有 1 项 P1，按上限停下。
+  - 本机测试 70 例：69 通过，1 跳过；负对照 6 例失败。CLI 复核做到第 2 轮仍有 1 项 P1，按上限停下。
 - **第 3 轮**（用户授权超出上限，`2f3a8306…`，+420/−20）：Docker CLI 改成固定绝对路径；模块加载时固定 `originalSpawnSync`、网络 ID、冻结的 argv 和 options；删掉 PATH 回退、existsSync 和继承的 env。81 例：80 通过，1 跳过；6 个单点变异全部被杀。复核结论是 blocked。之后补充探测**发现**：env 键做有状态类型转换时，仍能注入 `LD_PRELOAD` 一类变量（P1）。
 - **第 4 轮**（`e313cd3a…`，+459/−20）：子进程 env 改成冻结的空原型空对象（DV-14）。88 例：87 通过，1 跳过；新增 7 项对抗测试。**CLI 复核 pass**，没有 P0/P1，有 7 项 P2（TOCTOU、外层能访问 DB 网全部 4 个成员、空 env 下真实 CLI 的行为没验等）。
 - **状态：** **未提交**。r4 补丁放进 F 包，11-09 22:42 在现场 apply（`step3r4-02-apply.log`：`OK patch e313cd3a…`），marker 变为 `19ac232e`。
@@ -179,31 +179,31 @@
 - **为什么：** 现场脚本此前出过删除副作用、READY 子串误判、日志被覆盖等问题，需要一个可审计、只报不修的标准包。
 - **验证：** 包的 CLI 复核做了 r1→r4（r3、r4 由用户授权超限）。r4 结论 fail（2 项 P1），由 r4fix 修复；用户 22:17 接受剩余风险，r4fix 没再复核。干跑 168 个以上 CASE 全部符合预期；shellcheck 和 `bash -n` 通过。
 - **现场结果：** 窗口 e7be7b70（22:43）01/02/03 都 OK，04 `STOP_AT=wait-ready`，05 CLEAN。失败 token 是 `FRONT_CLAW_DATABASE_UNAVAILABLE_URL`，由 r5 定因。
-- **状态：** **仅现场**和 box。r5–r9 各包都是在这个包上改出来的。
+- **状态：** **仅现场**和本机。r5–r9 各包都是在这个包上改出来的。
 
 ## G. r5–r9 最小修复（全部未经 CLI 复核，用户授权跳过；全部未提交）
 
-| 轮 | 补丁 | 症状和根因 | 改动 | 验证（box） | 现场结果 |
+| 轮 | 补丁 | 症状和根因 | 改动 | 验证（本机） | 现场结果 |
 |---|---|---|---|---|---|
 | **r5** | `step3-r5-store-host.patch` `125d9024…`（4 个文件） | e7be7b70 报 `FRONT_CLAW_DATABASE_UNAVAILABLE_URL`：构造期 `createPreparation` 同步调用 assemble，这时 storePort 还没有被 `ensureFrontClaw()` 赋值，第 181 行必然抛错。这是代码顺序问题，与 env、URL、网络都无关。另外发现现场 `frontagent-controlled-pilot.mjs` 是多角色手改版 80d590dc（DV-08），按用户要求保留 | `wecom-bot-pilot.ts`：受控真实模式下，assemble 改给一个转发的 storeAssistant；prepare 要等 store 打开后才连企微；不再回落到 memory store。`frontagent-controlled-live-worker.mjs`：注入 `FRONT_CLAW_DATABASE_HOST='legacy-shared-pg-20261008-r1'`。新增 `front-claw-pilot-store.test.mjs` | 94 例：93 通过，1 跳过；对照组复现了现场的失败 | 01 先因磁盘不足 `STOP_AT=disk`，批准删卷后重跑。窗口 ffdd5ee9（23:56）在 wait-ready 失败，由 r6 定因 |
 | **r6** | `step3-r6-pg-vendor-diag.patch` `e952cead…`（122 个 diff） | ffdd5ee9 在 `pilot_prepare_start` 之后 5 ms 失败：stage 里**没有 `pg` 包**，`pg-pool.ts` 动态 import 失败；企微的「Client not connected」只是连带结果（DV-06） | 把 pg 8.13.1 及 11 个依赖（119 个纯 JS 文件，逐个核对 sha512 integrity）放进 `stage/app/node_modules`，不改业务代码。entry 新增 `classifyOriginalError`，在不打印原文的前提下输出错误类别和位置（针对 DV-24 脱敏后看不出原因）。新增 `front-claw-error-class.test.mjs` | 100 例：99 通过，1 跳过；新测试指向 r5 entry 时 6/6 失败；用现场同一个 Node 22.23.2 复现了缺 pg；嵌入式 PG 17.5 上 migration 能跑，且幂等 | 窗口 26e0d23c（00:53）**第一次 READY**，05 CLEAN；但到期时报 `CLEANUP_UNKNOWN` |
-| **r7** | `step3-r7-expiry-close.patch` `d12c0499…`（4 个文件） | 到期时有 3 个计时器同时触发，受控 close 和内层 close 都没有 once 保护，`performance-open` 对同一个 pool `end()` 两次，pg-pool 3.14.0 拒绝，于是正常到期被记成 cleanup 失败（DV-07） | `wecom-bot-pilot.ts`：受控和内层 close 都改成幂等（`closing ??=`）。`performance-open.ts`：`ended ??= pool.end()`。entry 增加 `WINDOW_EXPIRED`、`STOPPED_CLEAN`、`EXIT_FORCED_AFTER_CLEAN`、`INNER_TOKEN_*` 这些 token。新增 `front-claw-expiry-close.test.mjs`。脚本包的 observe 和 05 增加 BIZ 计数和 `EXPIRY_VERDICT` | 104 例：103 通过，1 跳过；新测试在 r6 上 3 例失败；用 vendored pg-pool 实测确认重复 end 会报错 | 窗口 0fd35464：到期干净（05 CLEAN，expired_clean），但 runner 接 DB 网失败 ×3，4 条消息里只有「你好」拿到最终回复。r7 的 01–05 日志 box 上**未找到证据**，结论引自 r8 RUNBOOK:7；marker 3a50f880 在 r8 的 03 日志里核对过 |
+| **r7** | `step3-r7-expiry-close.patch` `d12c0499…`（4 个文件） | 到期时有 3 个计时器同时触发，受控 close 和内层 close 都没有 once 保护，`performance-open` 对同一个 pool `end()` 两次，pg-pool 3.14.0 拒绝，于是正常到期被记成 cleanup 失败（DV-07） | `wecom-bot-pilot.ts`：受控和内层 close 都改成幂等（`closing ??=`）。`performance-open.ts`：`ended ??= pool.end()`。entry 增加 `WINDOW_EXPIRED`、`STOPPED_CLEAN`、`EXIT_FORCED_AFTER_CLEAN`、`INNER_TOKEN_*` 这些 token。新增 `front-claw-expiry-close.test.mjs`。脚本包的 observe 和 05 增加 BIZ 计数和 `EXPIRY_VERDICT` | 104 例：103 通过，1 跳过；新测试在 r6 上 3 例失败；用 vendored pg-pool 实测确认重复 end 会报错 | 窗口 0fd35464：到期干净（05 CLEAN，expired_clean），但 runner 接 DB 网失败 ×3，4 条消息里只有「你好」拿到最终回复。r7 的 01–05 日志本机上**未找到证据**，结论引自 r8 RUNBOOK:7；marker 3a50f880 在 r8 的 03 日志里核对过 |
 | **r8** | `step3-r8-runner-db-attach.patch` `c1fc7ede…`（5 个修改，1 个新增） | ① transport 在 `docker run` 之后几毫秒就 `network connect`，容器还没建出来，报「No such container」，并留下孤儿容器；② close handler 注册得太晚，slot 泄漏，之后所有 spawn 都被拒；③ 最终回复路径没有执行，用户什么也收不到 | transport：只在 NO_SUCH_CONTAINER 时每约 100 ms 重试，最多 15 s；失败时先 kill CLI，再 stop；close handler 提前注册。worker：新增 `onRunnerFailure`，给用户发一次兜底回复「处理失败，请稍后重试。」，并记录 `final_delivery`。pilot：新增 `notifyFailure` 和 `front_claw_handled`。脚本包：磁盘门槛 3 → 2 GiB，有 `frontclaw-*` 残留就停 | 120 例：119 通过，1 跳过；新增 16 例在 r7 上全部失败；TS 转译检查 | 窗口 3704c8fb（15:09）通过：admitted 4、runner_turns 3、final_delivery 3、fallback 0，05 CLEAN，expired_clean。但进程内回复仍是桩 |
 | **r9** | `step3-r9-front-claw-model.patch` `4eb90f2a…`（4 个文件，0 个新增） | Front Claw 进程内路径（没命中正则时）的 `model` 写死成桩「Front Claw 在。」（DV-20） | `wecom-bot-pilot.ts`：新增 `createFrontClawModel`，复用现有 DeepSeek（`deepseek-flash`）凭据读取方式，不新增凭据；工具集合按 `toolsFor(tier)` 取：员工 3 个、店长 7 个、老板 8 个；超时为 min(12 s, 剩余预算−1 s)；失败分 10 类，统一兜底；日志不含正文和 key。`pilot.mjs` 和 `worker.mjs` 只是透传。测试用假 fetch | 130 例：129 通过，1 跳过；10 个新测试在 r8 上全部失败；真实 handler 集成测试 5/5；326 个干跑 CASE | 窗口 6d2c609d（17:43）CLEAN，但 inbound=0、model calls=0，属于零流量，原因定不了（DV-22，见 `step3r9-zero-analysis`） |
 
 ## H. r9-reopen 包（18:3x，不改代码）
 - **为什么：** 在同一个 D 上重跑 04 会被 `S4.started` 已存在挡住；重跑 01 会按 r8 基线核对，报 `patched-files-col2`。脚本按设计拒绝重跑，不是现场坏了（DV-23）。
 - **改了什么：** 只新增 `04-reopen-window.sh`（precheck/start/observe）和 `05-reopen-residue.sh`。新状态全部写进 `W=$D0/reopen-YYYYMMDD-HHMMSS`，开窗前后都跑 `sha256sum -c D0/SHA256SUMS-05.txt`，证明原证据没被改。不重打补丁，不重封，marker 仍是 d05d316c。r9 的所有安全门都保留。
-- **验证：** box 干跑（`dryrun/logs-20261110-184019`）。没有做 CLI 复核。
+- **验证：** 本机干跑（`dryrun/logs-20261110-184019`）。没有做 CLI 复核。
 - **现场结果：** 窗口 933a41ed（18:50）CLEAN、expired_clean；`MODEL_REPLY calls=1 ok=1 failed=0`，admitted 4，final_delivery 2。这是**第一次确认真模型有回复**。
-- **状态：** 仅现场和 box。
+- **状态：** 仅现场和本机。
 
 ## I. step4 21 项验收包（20:56 修订版，不改代码）
 - **改了什么：** 开窗、观察、残留核对都**原样复用** r9-reopen 包。新增的现场脚本只有 PG 只读计数 `07-pg-counts.sh`（`f17ca00a…`），另外还有 `ACCEPTANCE-21.md`、`WINDOW-A-CHECKLIST.md` 和分窗 RUNBOOK。删卷脚本 `06-volume-rm.sh` 已作废，移到 `step4-acceptance-20261110-superseded/`。
 - **为什么：** 用户 20:55 的决定：认 21 项编号，第 2、4 项算不过，开两个窗口，批准 PG 只读计数。
 - **验证：** dryrun `run-second-reopen.sh` 模拟「r9 → reopen1 → 05 → reopen2」，第二次开窗的拒绝条件都符合预期；另做了 secret-scan。
 - **现场结果：** 窗口 A b58d72d3（21:04，用户 21:02 原话批准）CLEAN、expired_clean；admitted 13、runner_turns 6、final_delivery 6、fallback 0、`MODEL_REPLY calls=1 ok=1`；PG 计数 `COUNTS_OK` ×4。窗口 B **没开**（用户 21:43 决定不补测）。产品问题见 `issue-register-20261110/PRODUCT.md`（PR-01 到 PR-24）。
-- **状态：** 仅现场和 box。
+- **状态：** 仅现场和本机。
 
 ## J. r10 老板映射（草稿，未使用）
 - **改了什么：** `wecom-bot-pilot.ts` 新增选项 `frontClawOwnerIds`，用 `withFrontClawOwners` 包住 `remember`：名单里的 accountId 或 memberId 提升为 `owner` 档（拿到 8 个工具，含 `stores_ranking`）。`pilot.mjs` 透传；worker 里 `FRONT_CLAW_OWNER_IDS=Object.freeze([])`，**测试员工A的 id 待现场提供**。新增 4 个测试。
@@ -219,16 +219,16 @@
 |---|---|
 | **已推送（PR35 @ f2a8105，未合并，未部署）** | A1–A6 的累计结果（f2a8105 是否逐字等于 146121 B 补丁：推断，未逐文件比对） |
 | **未提交，但已打进现场 stage** | C（门禁 v2，经 v4 apply）、E（F-B r4）、r5、r6（含 vendored pg）、r7、r8、r9。现场当前 marker 是 d05d316c |
-| **只有现场或 box 脚本，不涉及仓库** | B 的同步工具、F 的 r4 包及 r5–r9 各包脚本、H 的 r9-reopen、I 的 step4 |
+| **只有现场或本机脚本，不涉及仓库** | B 的同步工具、F 的 r4 包及 r5–r9 各包脚本、H 的 r9-reopen、I 的 step4 |
 | **未提交，也没上现场** | D（observe-only，已搁置）、J（r10 草稿） |
 
 需要注意：现场 stage 与仓库已经**分叉**。仓库停在 f2a8105，现场多出 C、E、r5–r9 的全部改动，还有一个不是我们改的多角色手改版 `frontagent-controlled-pilot.mjs`（80d590dc）。迁移时要以现场 marker d05d316c 的文件清单为准，重新整理成提交，或者在 OpenDot 侧重新实现。
 
 ## 4. 证据缺口（未找到证据）
-- A1–A4、A6 的测试日志原文：box 上没有，测试条数只在父会话摘要里。
+- A1–A4、A6 的测试日志原文：本机上没有，测试条数只在父会话摘要里。
 - A1–A4 与待办 id 的对应关系：按时间和测试名推断，没有书面对应。
 - f2a8105 与 146121 B 补丁的逐文件一致性：没比对过。
-- r7 现场 01–05 日志：box 上只有 `step3r7-c11-20261110/c11-net-0fd35464.sh`。
+- r7 现场 01–05 日志：本机上只有 `step3r7-c11-20261110/c11-net-0fd35464.sh`。
 - 窗口 A 的 run.log 原文和逐条回复时间：DV-18、DV-29 已登记。
 - 删卷之前旧 SQLite 账本的实际路径：DV-19。
 - 「LD_PRELOAD 降级」这个说法的原文出处：DV-14，实际对应的是 r4 的空 env。

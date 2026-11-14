@@ -1,7 +1,7 @@
 # M04：单账本管理、目标确认、更正和增量报数
 
 日期：2026-11-11（UTC+8）。状态：实施前立项（写于代码改动前）。结果以 REPORT.md 为准。
-分工：牙牙侧编写；Codex牙 负责方向、把控与审查（22:25 起审 M01–M03，本片随后送审）；ai架构师牙 不再审查。
+分工：助手A侧编写；助手B负责方向、把控与审查（22:25 起审 M01–M03，本片随后送审）；架构负责人不再审查。
 模板：WORKFLOW-SUMMARY §2.1、§6.3；依据 MERGED.md M04 节、§5.2 旧 21 项 #3/#4/#9/#10/#11/#12、§7 决定项 #2；PM 本轮追加 4 点。
 
 ## 1. 背景与用户目标
@@ -20,7 +20,7 @@
 
 | 已确认 | 推断/未验证 | 本 Issue 新增 |
 |---|---|---|
-| 基线 = f2a8105 + M03 累计补丁（m03-cumulative.patch sha256 f8e8597f…）；新工作树 `<WORKSPACE>/fc-migration/repo-m04`（detached），树对象 793ce100 与 M03 记录一致 | 父端说明里“M03 树在 repo-m02”与实际不符：793ce100 在 repo-m03，repo-m02 为 M02 树 b1d44021；以树对象为准 | 目标草稿（kind=target）：回显姓名/门店/周期/金额/原值，「对」后才写 |
+| 基线 = f2a8105 + M03 累计补丁（m03-cumulative.patch sha256 f8e8597f…）；新工作树 `<本地路径>`（detached），树对象 793ce100 与 M03 记录一致 | 父端说明里“M03 树在 repo-m02”与实际不符：793ce100 在 repo-m03，repo-m02 为 M02 树 b1d44021；以树对象为准 | 目标草稿（kind=target）：回显姓名/门店/周期/金额/原值，「对」后才写 |
 | performance_targets/revisions/notifications 表已存在；drafts.kind 为 text | F 的 `manager-commands.ts`/pendingTargets 完整 diff 仍未取得，本片不采用 F 代码 | 更正草稿（kind=correction）：改金额/撤回，行锁+版本校验+revisions+改账通知意图同事务 |
 | M03 `commitConfirmingDraft` 在事务内 FOR SHARE 读策略行 | 旧 SQLite 只用于目录导入（绑定/别名），业务账目不写 SQLite（源码核实，未在线上核实） | 重发去重、追加只记新增、同金额合法两笔保留 |
 | test:pg 可用 PG17（FRONT_CLAW_PG_BIN，非线上版本） | 线上 PG 版本、真实企微 | 路由：correction/target 新意图；无标题清单进待确认；营销误入保持 0 |

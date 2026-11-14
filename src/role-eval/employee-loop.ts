@@ -1463,7 +1463,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       }
       const targetCommand = parseTargetCommand(text, today);
       const correctionCommand = targetCommand ? null : parseCorrectionCommand(text);
-      // R11 / C100：报单和改账同时出现时，不能只走改账把报单丢掉。
+      // R11：报单和改账同时出现时，不能只走改账把报单丢掉。
       // 已认出完整报单则先出报单草稿，改账由 leftover 明说没办。
       const reportHolds = std.status === 'complete';
       if ((targetCommand || correctionCommand) && !reportHolds) {

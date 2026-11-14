@@ -1,6 +1,6 @@
 # Front Claw 问题统一登记（ISSUE-REGISTER）
 
-> 2026-11-10 编制，时间均为北京时间（UTC+8）。依据用户 21:43 原话（牙牙转述）：「不用补测把这些产品问题统一登记起来还有我们开发遇到的问题汇总」。
+> 2026-11-10 编制，时间均为北京时间（UTC+8）。依据用户 21:43 原话（助手A转述）：「不用补测把这些产品问题统一登记起来还有我们开发遇到的问题汇总」。
 > **本登记只读编制**：
 > - 没有连服务器、没有读 env、没有 sudo、没有补测，没有写窗口 B 话术；
 > - 没有修改 productization-issues-20261110/ 和 step4-acceptance-20261110/ 里的任何文件；
@@ -120,7 +120,7 @@
   - 能证实的只有：13 条入站、19 条回复全部落在 21:13:30 到 21:17:30 之间；final_fallback=0；runner_turns_without_final=0；没有丢回复。
 - 第 3 项「本月目标」的人名缺失，以及第 5 项的名单就是她本人这一行空名，由 L-PG 加源码升级为已证实。
 
-## 4. 截图与牙牙转述不一致的地方（以截图为准）
+## 4. 截图与助手A转述不一致的地方（以截图为准）
 
 1. **目标回复没有人名。** 转述只说「已记 50000」。截图原文是「Front Claw：已把 2026-11 目标记为 50000。」，「已把」和日期之间没有人名，说明 displayName 为空（PR-03）。转述漏掉了这一点。
 2. **清单回显没有店名。** 截图里回显抬头没有门店名（S1、S2），转述没有提到。
@@ -143,8 +143,8 @@
 ## 5. 收尾证据（21:53 已纳入）
 
 ### 来源与核验
-- 目录：`<WORKSPACE>/front-claw-evidence/step4A-live-20261110/`，共 18 个文件。
-- zip：`step4A-live-20261110.zip`，sha256 **d4fc91522c65b715a33f532ff21e474b472d2c5d1d6b4bb52f2adca8597414a1**，与牙牙给的值**一致**。
+- 目录：`<证据目录>/step4A-live-20261110/`，共 18 个文件。
+- zip：`step4A-live-20261110.zip`，sha256 **d4fc91522c65b715a33f532ff21e474b472d2c5d1d6b4bb52f2adca8597414a1**，与助手A给的值**一致**。
 - zip 内也是 18 个文件；解包后与目录 `diff -r` **逐字节相同**。
 - 各文件的 sha256 见 §6。
 
@@ -159,7 +159,7 @@
 
 ### 是否干净收尾：**是**
 - 窗口：21:04:22 启动，21:06:54 READY，严格 30 分钟窗口，到期 21:34:22。21:38:40 时 launcher 已退出（judged=absent），`EXPIRY_VERDICT=expired_clean`。
-- outer-audit：`status=passed`，`run=0`，`privateRemoval.removed=true`，`volumeRetained=true`，outer-audit.json 的 sha256 为 d541bbb3…（现场路径，box 上没有副本）。
+- outer-audit：`status=passed`，`run=0`，`privateRemoval.removed=true`，`volumeRetained=true`，outer-audit.json 的 sha256 为 d541bbb3…（现场路径，本机上没有副本）。
 - 业务：
   - request_admitted=13，rejected=0；
   - reply_send_ok=19，err=0；
@@ -175,7 +175,7 @@
   - DV-34：现场有两套 Node；
   - 05 的卷清单有显示歧义（DV-17）。
 
-### 牙牙转述与日志的核对（以日志为准）
+### 助手A转述与日志的核对（以日志为准）
 
 | 转述 | 日志 | 结论 |
 |---|---|---|
@@ -205,7 +205,7 @@
 | step4A-screens-20261110/SHA256SUMS | 038402f1b9cb |
 | step4A-watch.ps1 | 618fae74cd5c |
 
-r9 源码位置：`/workspace/r9src/repo/src/role-eval/`，涉及 wecom-bot-handler.ts、assistant-tools.ts、assistant-commands.ts、manager-commands.ts、wecom-bot-pilot.ts、performance-postgres.ts。
+r9 源码位置：`<本地路径>`，涉及 wecom-bot-handler.ts、assistant-tools.ts、assistant-commands.ts、manager-commands.ts、wecom-bot-pilot.ts、performance-postgres.ts。
 
 窗口 A 收尾证据（`step4A-live-20261110/`，sha256 前 12 位）：
 

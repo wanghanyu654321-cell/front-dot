@@ -9,7 +9,7 @@ async function start(w: Awaited<ReturnType<typeof memoryWorld>>, c: ReturnType<t
   const channel=offlineChannels(); const service=await startFrontClawOpenDotService(fakeHost().host, {open:w.open,now:c.now,owner,channel:channel.factory,timers:false});
   return { service,channel,say:async (text:string,id:string)=>{channel.send('m-zhao',text,id);await service.idle();} };
 }
-// R3：由 Codex牙 的缺陷特征断言改为安全断言（修前失败、修后通过）：接管后旧消费者 A 什么都不能写。
+// R3：由 助手B 的缺陷特征断言改为安全断言（修前失败、修后通过）：接管后旧消费者 A 什么都不能写。
 it('AUDIT regression safe (R3): stale A cannot void a pending draft after B has acquired the lease', async()=>{
   const w=await memoryWorld(), c=manualClock(), a=await start(w,c,'A'); await a.say(sheet,'report');
   const g=gate(), original=w.store.transitionPendingDraft.bind(w.store);

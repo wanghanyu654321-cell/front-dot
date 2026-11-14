@@ -99,7 +99,7 @@ export function openedSelfAmountOk(name: string, amountText: string): boolean {
 }
 
 
-/** D122：标准行无单位小数政策。产品经理牙 21:30 已定，集中在这一处。 */
+/** D122：标准行无单位小数政策。产品负责人 21:30 已定，集中在这一处。 */
 export const STANDARD_DECIMAL_POLICY = {
   /** 整数部分小于此值的无单位小数 → 追问「是 X 万吗」。 */
   askIfIntegerPartBelow: 100,

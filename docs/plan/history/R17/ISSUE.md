@@ -1,6 +1,6 @@
 # R17 议题（R16 复审不准入）
 
-决策文件开工核对 sha `ec62edcc28609b6b9ae3d3bd13e38ff1de191c1bcd1dbc242eeaebef92d5c883`，已重读 D144–D150。本轮不改该文件。新口径从 D151 起只写 REPORT。不读 REVIEW / RESUME / blind4–13。
+决策文件开工核对，已重读 D144–D150。本轮不改该文件。新口径从 D151 起只写 REPORT。不读复审记录 / 续跑记录 / 留出测试集。
 
 P0：R16-07 并发回「已入账」两次。先查 performance_entries 是否多写、金额是否翻倍、010 唯一约束是否生效。确认改为条件状态迁移：只有本次把仍为 pending/confirming 的草稿改成 confirmed 才回「已入账」，否则已处理回复。并发测试断言行数=1、金额不翻倍、只回一次「已入账」。
 

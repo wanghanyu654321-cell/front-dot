@@ -1,13 +1,13 @@
 # M02 实施报告：路由纠偏与响应预算（含同店代报）
 
 日期：2026-11-11（UTC+8），完成于 18:24。结论：**本地实现完成；MemorySql 替身和本机 PG17 临时集群上验证通过。未提交，未部署，未接真实模型、企微或线上 PG，不能作为上线验收。**
-分工：牙牙侧写代码，Codex牙 审查（用户 18:07 决定）。流程按 WORKFLOW §2.1–2.4、§6.3；ISSUE.md / PLAN.md 在改代码前写好。
+分工：助手A侧写代码，助手B审查（用户 18:07 决定）。流程按 WORKFLOW §2.1–2.4、§6.3；ISSUE.md / PLAN.md 在改代码前写好。
 
 ## 1. 版本与基线
 
-- 原仓库 `<WORKSPACE>/fc-migration/repo` 没有动：分支仍是 `migration/m01`，HEAD 仍是 f2a8105，未提交 diff 的 sha256 仍是 `7819d48e…a31e`，和 M01/m01.patch 一致（开工时和收尾时各核对一次）。
+- 原仓库 `<本地路径>` 没有动：分支仍是 `migration/m01`，HEAD 仍是 f2a8105，未提交 diff 的 sha256 仍是 `7819d48e…a31e`，和 M01/m01.patch 一致（开工时和收尾时各核对一次）。
 - M01 快照：`m01-snapshot/`，内含 m01-working.diff（与 m01.patch 同 hash）、git-status、HEAD、15 个文件副本及 files.sha256。
-- M02 工作树：`<WORKSPACE>/fc-migration/repo-m02`。做法是 `git worktree add --detach` 拉出 f2a8105，再 `git apply` m01.patch；新文件用 `git add -N` 登记。没有 commit，没有 stash，没有建分支。node_modules 是从原 repo 拷来的，没有联网安装。
+- M02 工作树：`<本地路径>`。做法是 `git worktree add --detach` 拉出 f2a8105，再 `git apply` m01.patch；新文件用 `git add -N` 登记。没有 commit，没有 stash，没有建分支。node_modules 是从原 repo 拷来的，没有联网安装。
 - 副作用说明：
   - 原 repo 的 `.git/worktrees/` 里多了这个工作树的登记。
   - 生成增量补丁时，用临时索引写了一个 M01 树对象 `dc1e6f4b…`（m01-tree.txt）。它是 .git 里的松散对象，没有 ref，也没有 commit。
@@ -26,7 +26,7 @@
 | `src/role-eval/performance-store.ts` | EmployeeDraftContext 加两个可选字段 `itemsDigest`、`proxy`。都存在 payload_json 里，PG schema 不变。 |
 | `src/role-eval/wecom-bot-conversations.ts` | 岗位对话：`pickAutoRole` 不再把营销当兜底，闲聊有 reception 就交 reception，否则本地回复；选岗回退顺序去掉了 marketing；`route()` 加营销闸门，店务、闲聊、多意图都不提交到营销岗位，只有已在营销上下文里的不明确跟进（如“再来一条”）才允许继续；没有 current 也没选中岗位时，本地回复澄清，不再提示“岗位 内容营销”。 |
 | **单列：`tests/role-eval/performance-postgres.integration.test.ts`** | **只改一行**：`const bin = process.env.FRONT_CLAW_PG_BIN?.trim() \|\| '/usr/lib/postgresql/16/bin';`。不设变量时默认路径和原来完全一致（test-pg-default.txt 实测报 `/usr/lib/postgresql/16/bin/initdb ENOENT`）。测试仍自建、自删临时集群，走随机端口，不连 55432 常驻库。 |
-| 新增测试 | `intent-router-m02.test.ts`（7 项）、`employee-entry-m02.test.ts`（10 项）、`intent-corpus-eval-m02.test.ts`（1 项）、`employee-loop-pg-m02.integration.test.ts`（3 项，真实 PG）、`fixtures/intent-corpus-{tune,blind}.json`。 |
+| 新增测试 | `intent-router-m02.test.ts`（7 项）、`employee-entry-m02.test.ts`（10 项）、读取评测语料的测试（1 项）、`employee-loop-pg-m02.integration.test.ts`（3 项，真实 PG）、调参语料。 |
 | **改了旧测试的断言（行为按需求改变）** | `wecom-bot-auto-role.test.ts`：原先断言“你好”回落营销、单一营销授权时“投放预算”进营销、手动选营销后“你好”进营销，现改为不进营销。`wecom-bot-report-confirm.test.ts`：两项原断言“不完整报数 / 模型抽取失败时回落到会话”，在该测试里就是只授了营销的会话，即报数落营销，现改为不提交、零保存。共 6 处断言，详见 m02.patch。 |
 
 没有改 package.json、lock、schema，也没有改 M01 的两个测试文件。
@@ -39,7 +39,7 @@
 |---|---:|---|
 | `npm exec --offline -- tsc --noEmit` | 0 | — |
 | M01 回归：`vitest run employee-loop-m01 + employee-loop-lifecycle-m01` | 0 | 15/15 |
-| M02：`vitest run intent-router-m02 + employee-entry-m02 + intent-corpus-eval-m02` | 0 | 18/18 |
+| M02：私有评测语料 | 0 | 18/18 |
 | 相关回归（12 个文件） | 0 | 160/160 |
 | 全量 `vitest run` | 1 | 812 个用例：810 通过，2 失败。失败的只有 `tests/native/live-model-smoke.test.ts` 两项，基线就有。M01 报告里沙箱下的 6 个 EPERM 失败这次没有出现。 |
 | `FRONT_CLAW_PG_BIN=…/pg-temp/root/usr/lib/postgresql/17/bin npm run test:pg` | 0 | 11/11（原有 8 项 + 新增 3 项）；并发用例另外重复跑 5 次，5/5 通过 |
@@ -58,14 +58,14 @@
 
 ## 4. 语料指标
 
-文件：[corpus-metrics.json](corpus-metrics.json)，内含每类 P/R/F1 和混淆矩阵。
+文件：私有评测结果，内含每类 P/R/F1 和混淆矩阵。
 
 | 集合 | 条数 | 宏 F1 | 准确率 | 预测澄清率（金标澄清占比） | 店务误入营销 | 闲聊误入营销 |
 |---|---:|---:|---:|---:|---:|---:|
 | 调参集 tune | 55 | 1.00 | 1.00 | 14.5%（14.5%） | 0 | 0 |
-| 盲测集 blind | 52 | 1.00 | 1.00 | 19.2%（19.2%） | 0 | 0 |
+| 留出测试集 | 52 | 1.00 | 1.00 | 19.2%（19.2%） | 0 | 0 |
 
-- 合计 107 条，两集文本没有重复。盲测集 sha256 `d506c520…3885`，18:13 先冻结，再写分类器；18:16 只跑了一次就是 52/52，记录见 blind-first-run.txt，之后规则没再改。
+- 合计 107 条，两集文本没有重复。盲测集，18:13 先冻结，再写分类器；18:16 只跑了一次就是 52/52，记录见留出测试集产物，之后规则没再改。
 - **满分不能说明泛化能力。** 两集语料和规则是同一个作者写的，不算独立盲测。另外拿 12 句没见过的说法试了一下（probe-unseen.txt）：9 句落到“澄清”，比如“今天卖了三单”“帮客户写个感谢短信”“把刚才那笔改成600”；“朋友圈怎么发报数”判成多意图。**没有一句误入营销**，但规则召回明显偏低。设计取向是宁可澄清也不误路由。
 - 指定场景都在测试里：“帮我写今天报数清单”判报数，进店务；“预约明天下午3点张三”判预约；无序号确认（对 / 对的 / 确认 / 好的）判跟进；“客户名＋员工名”判报数；复合意图判澄清。
 - 时延只有本地替身数据：MemorySql 加进程内调用，100 个样本，P50 约 0.24 ms，P95 约 0.38 ms，最大约 1.36 ms（每次运行会有波动，见 m02.txt）。**不是真实 PG、模型或企微投递时延，不标达标**；“P95≤2 秒、15 秒内必有结果”这两条门槛仍未验证。超时路径用 80 ms 预算实测，<180 ms 内给出唯一的 timeout 终态。
@@ -78,21 +78,21 @@
 4. 请求登记和投递去重只在进程内有效。重启后的去重靠 M01 的 PG 草稿、操作号和全局指纹，“新实例收到同一个已完成请求”时的投递去重没单独测。
 5. 超时以后业务 Promise 不能硬中断：子 signal 一停，M01 入口在写库前会拒绝新写，但已经进了事务的会照常完成，可以按原消息号查回。
 6. 岗位对话的营销闸门只在单元层（auto-role、report-confirm）验证过，没有在真实 Native 会话上验证。M03 的正式授权接入后要组合复测。
-7. 没有第二位审阅者，等 Codex牙 审。d05d316c 的完整对齐仍缺。
+7. 没有第二位审阅者，等助手B审。d05d316c 的完整对齐仍缺。
 
-## 6. 给 Codex牙 的审查要点
+## 6. 给助手B的审查要点
 
 1. **营销闸门语义**：手动选了营销岗位后，不明确的文本（如“顾客问营业时间”）仍然提交到营销；闲聊、店务、多意图不提交。这个取舍是否可以接受？
 2. **闲聊去向**：岗位对话里闲聊交给 reception；没授 reception 的，本地回复，不进其他岗位。这样是否合适？
 3. **代报对象范围**：被代报人只要是本店在职、档案完整的人员即可，**不要求**在 `employee-loop:m01` 的受控名单里。是否要求被代报人也在名单内？
 4. **代报防篡改**：用条目摘要（sha256，不加密钥）防止 DB 里的草稿条目被改写；无摘要的旧草稿只允许本人。威胁模型是否足够？
 5. **请求预算缓存策略**：只缓存 completed，timeout/failed/cancelled 不缓存，这样重发原确认可以续上。这样是否会造成“同一请求先回结果未知、后回已入账”两次投递？目前的设计认为两次都该投递。
-6. **规则召回**：盲测是同一作者写的，未见句大多落澄清。建议 Codex牙 另写一份独立盲测语料，或者决定是否启用语义端口。
+6. **规则召回**：盲测是同一作者写的，未见句大多落澄清。建议助手B另写一份独立盲测语料，或者决定是否启用语义端口。
 7. 旧测试的 6 处断言改动是否都属于“修缺陷”，有没有误伤正当行为。
 8. 并发用例输方的回复是「草稿版本已变化」还是「没有待确认」，取决于时序，两种都算确定结果。这个口径是否可以接受？
 9. test:pg 的 FRONT_CLAW_PG_BIN 一行改动（默认值不变）。
 
-## 7. 需要用户或 Codex牙 决定的事
+## 7. 需要用户或助手B决定的事
 
 - 营销能力什么时候开：`router.marketing.enabled` 默认不装配，等于营销不开。首批 B 店要不要开营销，开给哪些人（看 marketing 授权）？
 - 被代报人要不要也在受控名单内（审查要点第 3 条）。
@@ -106,4 +106,4 @@
 - `m02.patch`：相对 base + M01 的增量。
 - `m02-cumulative.patch`：相对 f2a8105 的累计。
 - 两条路线已校验等价：在 f2a8105 干净导出上，先打 m01.patch 再打 m02.patch，和直接打累计补丁，结果逐字节一致。
-- 其他：ISSUE.md、PLAN.md、corpus-metrics.json、corpus-blind.sha256、blind-first-run.txt、probe-unseen.txt、changed-files.txt、final-status.txt、m01-tree.txt、test-output/、m01-snapshot/。
+- 其他：ISSUE.md、PLAN.md、私有评测语料、校验文件、留出测试集产物、probe-unseen.txt、changed-files.txt、final-status.txt、m01-tree.txt、test-output/、m01-snapshot/。

@@ -1,6 +1,6 @@
 # M04 报告：单账本管理、目标确认、更正和增量报数
 
-日期 2026-11-11（UTC+8），验证 19:21–19:31。工作树 <WORKSPACE>/fc-migration/repo-m04（detached，f2a8105 + M03，未 commit）。
+日期 2026-11-11（UTC+8），验证 19:21–19:31。工作树 <本地路径>，f2a8105 + M03，未 commit）。
 树对象（临时索引 write-tree）：**1aca630d23b6fbc337611f6d71c7a1b566940471**。基线：M03 树 793ce100（在 repo-m03），PR #35 头 f2a8105。
 m04.patch sha256 567573506c3f660ff44a354ac0491d859a10f7fabd030806588cc62498ed12dc（对 793ce100，15 文件 +1350/−38）
 m04-cumulative.patch sha256 000c2e59f006d90d607219b958eed2db54feae15e2773a61a55c89e23a0ddfc3（对 f2a8105，43 文件 +3953/−103）
@@ -53,8 +53,8 @@ D1–D7 沿用 M03 REPORT §0，本片没有改动。新增：
   - access-fixture-m03 的 `world()` 可以传入 now。
 - **语料**：
   - 调参集追加 16 条（共 71 条，原格式不动）。
-  - 新增 M04 盲测集 27 条，sha c1eeae86…，在改分类器之前冻结。首跑 12/27，见 blind-m04-first-run.txt。
-  - M02 盲测集未动（d506c520…）。
+  - 新增 M04 盲测集 27 条，在改分类器之前冻结。首跑 12/27，见留出测试集产物。
+  - M02 盲测集未动（哈希不变）。
   - M04 盲测与 M02 盲测重叠 1 条「对的」，测试里已显式承认。
 
 PM 四点：
@@ -137,4 +137,4 @@ PG 证据（PG17，非线上版本，不代表线上延迟；本片**不声称**
 
 ## 7. 文件
 
-ISSUE.md、PLAN.md（都在写代码前完成）、REPORT.md、m04.patch、m04-cumulative.patch、m04-tree.txt、changed-files.txt、corpus-metrics-m04.json、blind-m04-first-run.txt、test-output/（命令索引见 COMMANDS.md）。tmp/ 是本片的临时目录（探针、压测输出、临时 PG 测试目录）。
+ISSUE.md、PLAN.md（都在写代码前完成）、REPORT.md、m04.patch、m04-cumulative.patch、m04-tree.txt、changed-files.txt、私有评测语料、留出测试集产物、test-output/（命令索引见 COMMANDS.md）。tmp/ 是本片的临时目录（探针、压测输出、临时 PG 测试目录）。

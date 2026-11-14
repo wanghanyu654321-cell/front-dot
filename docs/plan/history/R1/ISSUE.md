@@ -1,7 +1,7 @@
 # R1 修复轮 ISSUE（M03 / M06 / M07 审计问题 + M02 路由）
 
-- 基线：G=f2a8105；起点树 = M08 累积树 79c86525（worktree <WORKSPACE>/fc-migration/repo-r1，detached）。
-- 来源：M03/REVIEW.md、M06/REVIEW.md、M07/REVIEW.md（Codex牙）、audit/blind-results.md；对齐群补充设计（两个出口、单调版本、共用 fencing、M02 解析先补）。
+- 基线：G=f2a8105；起点树 = M08 累积树 79c86525（worktree <本地路径>，detached）。
+- 来源：复审记录（助手B）、留出测试集产物；对齐群补充设计（两个出口、单调版本、共用 fencing、M02 解析先补）。
 - 范围外：不连服务器/企微/共用 PG，不执行 M08 REPORT §5 命令，不 commit/push，不读 env/凭据。
 
 ## 问题清单

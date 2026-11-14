@@ -1,7 +1,7 @@
 # M03：三档权限、功能配置与撤权
 
 日期：2026-11-11（UTC+8）。状态：实施前立项（写于代码改动前）。结果以 REPORT.md 为准。
-分工：牙牙侧编写，Codex牙 审查（22:25 审 M01/M02，意见若影响 M03 另行通知）。模板：WORKFLOW §2.1、§6.3；依据 MERGED.md M03 节、合审-03、T05/T12/T14、旧 21 项 #1/#5/#6/#7/#15/#18。
+分工：助手A侧编写，助手B审查（22:25 审 M01/M02，意见若影响 M03 另行通知）。模板：WORKFLOW §2.1、§6.3；依据 MERGED.md M03 节、合审-03、T05/T12/T14、旧 21 项 #1/#5/#6/#7/#15/#18。
 
 ## 1. 背景与用户目标
 
@@ -16,7 +16,7 @@
 
 | 已确认 | 推断/未验证 | 本 Issue 新增 |
 |---|---|---|
-| 基线 = f2a8105 + M02 累计补丁（diff sha256 264761c3…eb52 与 M02/m02-cumulative.patch 一致）；工作树 `<WORKSPACE>/fc-migration/repo-m03`，repo-m02 不动 | F `feature-matrix.ts` 只有材料描述（空列表回退默认、坏配置回退默认、owner 空=全部、ownerAccountIds 覆盖），本仓库无该文件，按 MERGED 结论只借形状 | `access-policy.ts`：版本化策略、多层交集、拒绝优先 |
+| 基线 = f2a8105 + M02 累计补丁（diff sha256 264761c3…eb52 与 M02/m02-cumulative.patch 一致）；工作树 `<本地路径>`，repo-m02 不动 | F `feature-matrix.ts` 只有材料描述（空列表回退默认、坏配置回退默认、owner 空=全部、ownerAccountIds 覆盖），本仓库无该文件，按 MERGED 结论只借形状 | `access-policy.ts`：版本化策略、多层交集、拒绝优先 |
 | people 表有 tier/storeId/active；config 表为 key/value；PG 草稿条件转换、entries 唯一 | 线上真实组织结构、真实账号映射 | 员工入口在入口、执行、草稿确认、事务提交、查询发送前统一鉴权 |
 | M02 路由：营销需 enabled ∧ 获权 | OpenDot 授权层（M07 才有） | 提交事务内锁定策略行，撤权与提交按行锁定序 |
 | test:pg 可用 PG17（FRONT_CLAW_PG_BIN） | 线上 PG 版本 | 店长/老板查询：他人进度、门店汇总、谁没报、门店排名（范围下推到 PG 查询） |

@@ -1,6 +1,6 @@
 # R14 PLAN
 
-工作树 `<WORKSPACE>/fc-migration/repo-r14`，已加载 R13 树。不提交、不推送、不读 env、不用 sudo、不连服务器、不接真模型、不碰共享 PG。不读 blind4–10、不读任何 REVIEW.md。
+工作树 `<本地路径>`，已加载 R13 树。不提交、不推送、不读 env、不用 sudo、不连服务器、不接真模型、不碰共享 PG。不读留出测试集、不读任何复审记录。
 
 ## 实现
 
@@ -17,4 +17,4 @@
 
 ## 验收
 
-锁定集 A/B/C 均 ≥54/56（C112、C113 例外）；单元全过（仅 live-model-smoke 2 条已知失败）；test:pg 三跑全过；变异全杀（既有 15 + 本轮至少覆盖第 1、3、4 项各一个）；门②相关原有测试不退。冻结后报树 hash、r14.patch / 累积 patch / REPORT sha256、各项数字、新 D 号内容（本轮若写入 HANYU-DECISIONS，先核对 sha、只追加）。
+锁定集 A/B/C 均 ≥54/56（相关评测条目例外）；单元全过（仅 live-model-smoke 2 条已知失败）；test:pg 三跑全过；变异全杀（既有 15 + 本轮至少覆盖第 1、3、4 项各一个）；门②相关原有测试不退。冻结后报树 hash、r14.patch / 累积 patch / REPORT sha256、各项数字、新 D 号内容（本轮若写入 HANYU-DECISIONS，先核对 sha、只追加）。

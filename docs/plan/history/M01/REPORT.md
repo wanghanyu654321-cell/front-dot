@@ -4,11 +4,11 @@
 
 ## 版本与制品
 
-- 仓库：`<WORKSPACE>/fc-migration/repo`；分支始终为 `migration/m01`。
+- 仓库：`<本地路径>`；分支始终为 `migration/m01`。
 - 实际 base：`f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。实际 Git HEAD 仍为同一 SHA，未生成新提交。
 - 未提交 head 的可复核表示：**base + [m01.patch](m01.patch)**。
 - `m01.patch` SHA256：`7819d48effd4d053ae327ca49d083cd005bae9921ac069d0ac57d661f1eba31e`。
-- 已执行用户指定的 `git add -N .`（仅 intent-to-add），再执行 `git diff --binary f2a8105acf84ac0679b3a0f4b86c973d03e1781a > <WORKSPACE>/fc-migration/M01/m01.patch`；`sha256sum`、`git diff --check` 均成功。补丁共 15 文件，已核对不含 node_modules、package.json、package-lock.json 或构建产物。
+- 已执行用户指定的 `git add -N .`（仅 intent-to-add），再执行 `git diff --binary f2a8105acf84ac0679b3a0f4b86c973d03e1781a > <本地路径>`；`sha256sum`、`git diff --check` 均成功。补丁共 15 文件，已核对不含 node_modules、package.json、package-lock.json 或构建产物。
 - [ISSUE.md](ISSUE.md) 与 [PLAN.md](PLAN.md) 在代码修改前写入；[BASELINE-ALIGN.md](BASELINE-ALIGN.md) 和 [baseline-provenance.json](baseline-provenance.json) 记录片内 G/L/F 依据。d05d316c 是现场 marker，不冒充 Git SHA 或完整对齐后的 head。
 
 ## 实际改动文件
@@ -53,7 +53,7 @@
 
 ## 命令与结果
 
-执行目录均为 repo，B 同环境对照除外。npx/npm 使用 `npm_config_offline=true`；Vitest 的 `TMPDIR=<WORKSPACE>/fc-migration/M01/tmp`。输出都按 `; echo "exit=$?"` 追加实际测试退出码。所有最终及中间命令的**完整参数、退出码、计数与原始日志**见 [test-output/COMMANDS.md](test-output/COMMANDS.md)。
+执行目录均为 repo，B 同环境对照除外。npx/npm 使用 `npm_config_offline=true`；Vitest 的 `TMPDIR=<本地路径>`。输出都按 `; echo "exit=$?"` 追加实际测试退出码。所有最终及中间命令的**完整参数、退出码、计数与原始日志**见 [test-output/COMMANDS.md](test-output/COMMANDS.md)。
 
 | 最终命令 | 退出码 | 结果 / 原始输出 |
 |---|---:|---|

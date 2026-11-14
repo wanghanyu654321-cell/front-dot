@@ -1,7 +1,7 @@
 # M02：路由纠偏与响应预算（含同店代报）
 
 日期：2026-11-11（UTC+8）。状态：实施前立项（写于代码改动前；仅 test:pg 程序路径一行在立项同时按调度方补充要求改动）。实际结果以 REPORT.md 为准。
-分工：牙牙侧编写代码；Codex牙 定方向、把控和审查（用户 18:07 决定）。模板：WORKFLOW-SUMMARY §2.1–2.4、§6.3。
+分工：助手A侧编写代码；助手B定方向、把控和审查（用户 18:07 决定）。模板：WORKFLOW-SUMMARY §2.1–2.4、§6.3。
 
 ## 1. 背景与用户目标
 
@@ -18,8 +18,8 @@
 
 | 已确认（有代码/测试为证） | 推断或未验证 | 本 Issue 新增 |
 |---|---|---|
-| 仓库 `<WORKSPACE>/fc-migration/repo`，分支 `migration/m01`，HEAD `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`，未提交 diff sha256 = `7819d48e…a31e` = M01/m01.patch（18:10 核对一致） | d05d316c（现场 marker）完整逐行对齐仍缺，沿用 M01 BASELINE-ALIGN 结论 | 新工作树 `<WORKSPACE>/fc-migration/repo-m02`（detached f2a8105 + 应用 m01.patch），不改原 repo |
-| M01 员工窄入口 `employee-loop.ts`：本人清单/确认/进度/入账结果、操作号=draftId | Fable F 的 `intent-router.ts`/`route-log.ts` 不在本仓库，无法逐行复用，只按 MERGED 描述的思路重写 | `intent-router.ts`（纯函数分类+决策，无写库能力） |
+| 仓库 `<本地路径>`，分支 `migration/m01`，HEAD `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`，未提交 diff sha256 = `7819d48e…a31e` = M01/m01.patch（18:10 核对一致） | d05d316c（现场 marker）完整逐行对齐仍缺，沿用 M01 BASELINE-ALIGN 结论 | 新工作树 `<本地路径>`（detached f2a8105 + 应用 m01.patch），不改原 repo |
+| M01 员工窄入口 `employee-loop.ts`：本人清单/确认/进度/入账结果、操作号=draftId | 早期方案的 `intent-router.ts`/`route-log.ts` 不在本仓库，无法逐行复用，只按 MERGED 描述的思路重写 | `intent-router.ts`（纯函数分类+决策，无写库能力） |
 | `pickAutoRole` 回落 marketing；auto-role 测试断言旧行为 | 真实模型在语义分类上的准确率、时延 | `request-budget.ts`（统一截止、唯一终态、最终回复去重、迟到结果） |
 | `matchPerson` 只在给定门店内精确匹配姓名/别名 | 真实企微投递时延 | `route-log.ts`（入站/分类/提交/投递分段，带请求号，无正文） |
 | test:pg 可自起临时集群；本机仅有 PG17 用户态程序 | 线上 PG 版本未核实（测试原写 PG16） | 同店代报、跨店拒绝；≥100 条标注语料与评测；真实 PG 集成用例 |
@@ -64,4 +64,4 @@
 
 ## 9. 完成说明
 
-见 REPORT.md：base SHA、累计/增量补丁 sha256、命令与退出码、未验证项、给 Codex牙 的审查要点。
+见 REPORT.md：base SHA、累计/增量补丁 sha256、命令与退出码、未验证项、给助手B的审查要点。

@@ -64,12 +64,12 @@ MemorySql **不支持 ALTER**：内存测试不跑 009（首次访问自动建�
 
 ### 2.4 盲测门槛
 
-`tests/r2/blind-r2-gate.test.ts`：语料 B038「（评测原句已删）」原标「该澄清」（D80 只收整数元）。1.2 元现合法，出待确认草稿是 D105 正确行为。门槛把这一条从 `should_clarify_but_executed` 减去，**不改语料、不追盲测集**。其余 17 条「该澄清」仍要求 0 误执行；该拒绝 0 误执行；格式明确报单 30/30。
+评测语料中有一条「（评测原句已删）」原标「该澄清」（D80 只收整数元）。1.2 元现合法，出待确认草稿是 D105 正确行为。门槛把这一条从 `should_clarify_but_executed` 减去，**不改语料、不追盲测集**。其余 17 条「该澄清」仍要求 0 误执行；该拒绝 0 误执行；格式明确报单 30/30。
 
 ## §3 验证（`test-output/`）
 
 - `tsc --noEmit`、`tsc -p tsconfig.build.json`：exit 0
-- 单元 vitest（排除 integration 与 live-model）：**1180 个，1178 通过、2 跳过**（`blind-stats-r1`、`blind-r2` 需环境变量）。122 个文件通过，2 个跳过。日志：`vitest-unit.txt`
+- 单元 vitest（排除 integration 与 live-model）：**1180 个，1178 通过、2 跳过**（两个读取评测语料的测试需环境变量）。122 个文件通过，2 个跳过。日志：`vitest-unit.txt`
 - `tests/native/live-model-smoke.test.ts`：**10 通过、2 失败**——即本轮允许的已知 2 个（无真模型：`startup-failed`/`import-sdk` vs 期望的 `query-failed`/`complete`）。**未跑真模型。** 日志：`vitest-live-model.txt`
 - `test:pg`（PG17，`AUDIT_PG_ALLOW=isolated-synthetic`，`AUDIT_PG_URL=postgres://frontclaw@127.0.0.1:55432/postgres`，`FRONT_CLAW_PG_BIN` 指向 pg-temp 17）：**20 个文件、90 个用例全绿**（R4 为 19/86；本轮加 `r5-pg` 4 条，且含 Codex 用的 `audit-r3a-review` 2 条、`audit-r2a-*`、`r4-privilege`）。日志：`vitest-pg.txt`
 - 写路径静态检查仍绿（含新登记的店目标提交）。
@@ -96,7 +96,7 @@ MemorySql **不支持 ALTER**：内存测试不跑 009（首次访问自动建�
 1. **静态写路径检查只是辅助。** 真正的守卫应是数据库权限（与 D46 同一思路）。R4 在临时 PG 上做了最小权限角色演示（`r4-privilege` 本轮仍绿）。**这不是生产 SECURITY DEFINER 屏障，也不是生产账户迁移**——R4 附录已声明，本轮仍成立。生产落实 D46 仍待办。
 2. **009 不在进程启动时自动执行。** 业务账号（凭据文件）只探测版本。运维须用迁移账号显式 `migrateUp`。若库停在 7 而应用写「680.50」进 integer，会失败（整元「680」可写入 v7，这是有意的兼容）。
 3. **009 down 假定 v9 的 `confirmed`/`consultant` 来自 009 up 对旧库的改写。** 若有人在 v7 就用 R5 入口写入 `confirmed`/`consultant`，再升再降，会被还原成 `recorded`/`业绩`。迁移测试已按此记录。
-4. **盲测语料已部分过时**（B038 已记录）。按要求不追盲测集。holdout 若仍按 D80 标「该澄清」，会继续显示产品规则漂移。
+4. **盲测语料已部分过时**（相关评测条目已记录）。按要求不追盲测集。留出集若仍按 D80 标「该澄清」，会继续显示产品规则漂移。
 5. **未跑真模型**；live-model-smoke 两个已知失败保留。
 6. MemorySql 不能跑 009 ALTER；内存路径靠自动建表与分整数，与真实 PG 的 numeric 字符串路径不完全同一。
 

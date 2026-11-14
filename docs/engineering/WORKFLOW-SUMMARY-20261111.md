@@ -3,7 +3,7 @@
 - 来源：<INTERNAL_WIKI_URL> 2026-11-11 00:33，新加坡时间 UTC+8）
 - 读取方式：用户电脑上的 lark-cli（user 身份）调用 `wiki +node-get`、`wiki +node-list`（递归）和 `docs +fetch --doc-format markdown`
 - 共 40 篇（根页面 + 39 篇子文档），全部读取成功，类型都是 docx
-- 原文：/workspace/feishu_cli_wiki/NN_编号_标题.md
+- 原文：<本地路径>
 - 注：这个链接本身讲的不是“飞书 CLI”，而是一个人从桌面助手 **MiniClaw** 演进到 **Personal Agent（多 Dot 协作个人智能体）** 的开发实录，核心是一套 **“网页端聊方案 → 写 Issue/Plan → 本地 Codex 认领执行 → 人工审查”** 的 AI 结对编程工作流。
 
 ---
