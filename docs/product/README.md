@@ -55,5 +55,5 @@
 ## 6. 决策记录
 
 - [decisions/HANYU-DECISIONS-20261112.md](decisions/HANYU-DECISIONS-20261112.md)：hanyu 拍板和产品默认值，D5–D173。**只追加，不改旧条目。**
-- D171–D173 是 R18b 准入后定的，排进下一轮修。
+- D171–D173 是 R18b 准入后定的，已在 R19 处理。D174–D185 尚未同步到本文件，摘要见 [../plan/status.md](../plan/status.md)。
 - [D5-roles-draft.md](D5-roles-draft.md)：角色表草稿（待定项已由上面第 2 节的决定覆盖）。

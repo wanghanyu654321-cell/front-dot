@@ -23,6 +23,7 @@ export interface StoreBusinessActor {memberId:string;accountId:string;personId:s
 /** The store opened at startup. Sheet text and its confirmations write here, not into a role chat. */
 export interface StoreBusinessPort {
  readonly employeeLoop?: boolean;
+ captureArrival?():Promise<Readonly<import('./pending-order.js').PendingArrival>>;
  remember(actor:StoreBusinessActor):Promise<void>;
  hasOpenDraft(memberId:string):Promise<boolean>;
  handleMessage(input:EmployeeMessage):Promise<{replies:readonly string[];ledgerSettled?:boolean}>;
@@ -104,6 +105,9 @@ function createReportHandler(options:Omit<BotReportOptions,'mode'>&{mode:'isolat
   const reserveEarly=!!conversations||!!storeAssistant?.employeeLoop;
   const reservation=reserveEarly?await authority.withCurrent(context,checkActive=>{const replay=beforeWork?.({context,event:structuredClone(event),actor:{...actor}},checkActive);checkActive();return replay?structuredClone(replay):undefined;}):undefined;
   const reservedReply=reservation?.cached;
+  // R19：原全局指纹成功预留后才准入业务读取；冲突或缓存回复不取号、不准备业务资源。
+  const pendingArrival=!reservedReply&&storeAssistant?.employeeLoop?storeAssistant.captureArrival?.():undefined;
+  void pendingArrival?.catch(()=>{});
   // 报数 fast path (regex parseStaffReport, no model). Only a COMPLETE report, or 「对」/「确认」/「改」 against
   // this conversation's open pending report, bypasses the conversation. Nothing is saved before confirmation.
   const pendingReports=conversations?.pendingReports,reportTools=pendingReports?createBotReportTools({ledger,pendingReports}):undefined;
@@ -130,7 +134,7 @@ function createReportHandler(options:Omit<BotReportOptions,'mode'>&{mode:'isolat
     try{
      const listed=employees.find(employee=>employee.accountId===context.identity.accountId);
      if(!child.signal.aborted)await storeAssistant.remember({memberId:event.memberId,accountId:context.identity.accountId,personId:actor.employeeId,displayName:actor.employeeName,storeId:scope.store,storeName:listed?.storeName||scope.store,tier:context.roles.includes('manager')?'manager':'employee',roles:context.roles});
-     const handled=child.signal.aborted&&rawText!=='入账结果'?{replies:['Front Claw：这次没处理完，没有入账。请再发一次。']}:await storeAssistant.handleMessage({memberId:event.memberId,text:rawText,messageId:event.messageId,sessionId:hash(JSON.stringify([context.channel.corpId,event.botId,event.memberId,context.identity.accountId,context.identity.workspaceJid,scope.store])),bindingVersion:context.channel.bindingVersion,signal:child.signal,deadline:budgetDeadline});
+     const handled=child.signal.aborted&&rawText!=='入账结果'?{replies:['Front Claw：这次没处理完，没有入账。请再发一次。']}:await storeAssistant.handleMessage({memberId:event.memberId,text:rawText,pendingArrival,arrivedAt:event.createTime===undefined?undefined:new Date(event.createTime*1000).toISOString(),messageId:event.messageId,sessionId:hash(JSON.stringify([context.channel.corpId,event.botId,event.memberId,context.identity.accountId,context.identity.workspaceJid,scope.store])),bindingVersion:context.channel.bindingVersion,signal:child.signal,deadline:budgetDeadline});
      storeContent=handled.replies.map(line=>line.trim()).filter(Boolean).join('\n')||'Front Claw：这次没有处理成。';
      ledgerSettled=handled.ledgerSettled===true;
     }finally{clearTimeout(timer);input.signal.removeEventListener('abort',onParent);}

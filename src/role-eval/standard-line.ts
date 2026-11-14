@@ -26,6 +26,7 @@ import { customerNameLooksContaminated } from './negated-makeup.js';
 import { stripFixedNegatedMakeup } from './negated-makeup-fixed.js';
 import { isWhitelistedRemark, REMARK_DRAFT_POLICY } from './remark-whitelist.js';
 import { stripTrailingCourtesy } from './remark-courtesy.js';
+import { matchesCustomerNameStructure } from './customer-name-structure.js';
 
 export const normalizeReportText = (text: string): string => text.normalize('NFKC');
 
@@ -40,7 +41,10 @@ export const CUSTOMER_HONORIFIC = new RegExp(`^[\\u4e00-\\u9fa5](?:${HONORIFIC})
  * 尾部是「姓+称谓」的（「今天的钱姐」「昨天周老师」）仍走原口径，日期前缀由 D124 处理；
  * 「客户李小雪」「丽」等既有可解析写法只要不含非名字词就保持可解析。
  */
-export const NOT_CUSTOMER_NAME = /整单|储值卡|一共|总共|合计|总计|共计|总额|加起来|目标|本月|本周|这周|刚才|全部|今天|今日|昨天|昨晚|昨日|前天|明天|明日|后天|今晚|今早|上周|下周|这个月|上个月|上月|当月|查询|查一下|查下|汇总|排名|多少|来做|过来|到店|开始|退款|改成|改到|改为|改账|大概|大约|左右|出头|撤回|撤销|更正|亏了|赔了|退了|减了|少了|多了|付了|收了|将近|不到|几乎|差不多|写成|订正|瞅一|列一|约一|记成|当成|算成|重新/;
+const CUSTOMER_NOT_NAME_CONFIG = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../config/customer-not-name.json'), 'utf8')) as { frozen: boolean; words: string[] };
+export const CUSTOMER_NOT_NAME_WORDS: readonly string[] = Object.freeze([...CUSTOMER_NOT_NAME_CONFIG.words]);
+const NON_SUMMARY_CUSTOMER_WORDS = /整单|储值卡|目标|本月|本周|这周|刚才|全部|今天|今日|昨天|昨晚|昨日|前天|明天|明日|后天|今晚|今早|上周|下周|这个月|上个月|上月|当月|查询|查一下|查下|汇总|排名|多少|来做|过来|到店|开始|退款|改成|改到|改为|改账|大概|大约|左右|出头|撤回|撤销|更正|亏了|赔了|退了|减了|少了|多了|付了|收了|将近|不到|几乎|差不多|写成|订正|瞅一|列一|约一|记成|当成|算成|重新/;
+export const NOT_CUSTOMER_NAME = new RegExp([NON_SUMMARY_CUSTOMER_WORDS.source, ...CUSTOMER_NOT_NAME_WORDS.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))].join('|'));
 const HONORIFIC_SUFFIX = new RegExp(String.raw`[\u4e00-\u9fa5](?:${HONORIFIC})$`);
 
 /** 客户栏是否可当作名字。含非名字词的片段不认；尾部称谓走原口径。 */
@@ -75,7 +79,8 @@ export function isOpenedSelfCustomerName(raw: string): boolean {
   if (NOT_CUSTOMER_NAME.test(name)) return false;
   if (/^(?:我|你|他|她|它|本人|咱)$/.test(name)) return false;
   // 祈使/动作前缀（「把许姐680」是改账，不是客户叫「把许姐」）
-  if (/^(?:把|将|帮|请|替|给|用|找|看|查|改|写|列|约|瞅|订)/.test(name)) return false;
+  // D170/D173：配置姓氏＋名的完整形态不能被动作首字抢先拒收；仍须经过 D152、非名字表和名单。
+  if (/^(?:把|将|帮|请|替|给|用|找|看|查|改|写|列|约|瞅|订)/.test(name) && !matchesCustomerNameStructure(name)) return false;
   return /^[\u4e00-\u9fa5]{2,4}$/.test(name); // D138-open
 }
 
@@ -113,6 +118,11 @@ const CN_TERM = String.raw`[零〇一二两三四五六七八九十百千万]+(?
 const TERM = String.raw`(?:${ARABIC_TERM}|${CN_TERM})`;
 const AMOUNT = String.raw`(${TERM}(?:\s*[+＋]\s*${TERM})*)`;
 const EMPLOYEE = String.raw`[（(]\s*([^（）()]{1,16}?)\s*[）)]`;
+/** D171/D153：只读取标准行客户位；解析拒收非名字时也能给出同一个通用先问。 */
+export function hasNonCustomerStandardLabel(line: string): boolean {
+  const match = new RegExp(String.raw`^([^\d\s()（）:：+＋.\-−－﹣负¥￥]+?)\s*[:：]?\s*${AMOUNT}(?:\s*${EMPLOYEE})?\s*(.*)$`).exec(line);
+  return !!match?.[1] && CUSTOMER_NOT_NAME_WORDS.some(word => match[1]!.includes(word));
+}
 const MULTI_EMPLOYEE = /[/／、,，&]|或/;
 /** 行首列表记号：序号、列表短横、圈号（D125 多行清单格式，不是前缀词）。 */
 const LINE_PREFIX = /^(?:\d+\s*[.、．)]\s*|[-—–•*]\s*|[①②③④⑤⑥⑦⑧⑨⑩]\s*)/;

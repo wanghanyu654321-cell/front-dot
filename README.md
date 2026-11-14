@@ -2,7 +2,7 @@
 
 Front Claw（美业门店企微助手）迁入 OpenDot 的工程仓库：复用原 Front Claw 代码，以**薄适配**挂进 OpenDot 宿主，保留企微智能机器人长连接和 PostgreSQL 业绩账本，Mem0 保持关闭。
 
-> 当前状态（2026-11-14，北京时间）：**离线开发阶段，未上线。** 最新冻结版本是 R18b（树 `419ce5e5`），2026-11-14 20:02 通过离线准入：门②（该问的不执行）6 组留出集全部为 0，门①（D144 纯标准行）全部 100%。离线准入不等于可以上线，门③、门④ 只在正式实测判定。没有部署，没有连接真实企微、真实模型或线上数据库。详见 [docs/plan/status.md](docs/plan/status.md)。
+> 当前状态（2026-11-15，北京时间）：**离线开发阶段，未上线。** 最新冻结版本是 R23（树 `d71b9872`），2026-11-15 通过离线准入：门②（该问的不执行）全部留出集为 0，门①（D144 纯标准行）全部 100%，与 R18b 相比没有退步。离线准入不等于可以上线，门③、门④ 只在正式实测判定。没有部署，没有连接真实企微、真实模型或线上数据库。详见 [docs/plan/status.md](docs/plan/status.md)。
 
 ## 它做什么
 
@@ -23,7 +23,7 @@ Front Claw（美业门店企微助手）迁入 OpenDot 的工程仓库：复用�
 | `src/role-eval/` | 业务核心：意图路由、标准行解析、单闸草稿、账本（内存/PG）、权限、预约、通知 |
 | `src/opendot/` | OpenDot 薄适配：宿主契约、单消费者租约、企微通道、Mem0 关闭守卫 |
 | `src/migration/` | 两库迁移 CLI（默认 dry-run，守卫禁止连接共享库） |
-| `migrations/` | PG 表结构迁移（007–010，含 down），见 `migrations/README-m08.md` |
+| `migrations/` | PG 表结构迁移（007–011，含 down），见 `migrations/README-m08.md` |
 | `config/` | 产品配置：客户名策略、备注白名单、客套语、固定否定补报说法 |
 | `integrations/opendot-front-claw/` | OpenDot 侧挂点补丁与说明 |
 | `integrations/native/` | 原 Native 宿主、受控容器边界等底座（历史资产，node:test） |
@@ -31,7 +31,7 @@ Front Claw（美业门店企微助手）迁入 OpenDot 的工程仓库：复用�
 | `scripts/eval-gates.sh` | 门禁评测脚本（喂入任意同格式 jsonl 语料） |
 | `docs/architecture/` | 架构 |
 | `docs/product/` | 产品规则、业绩口径、决策记录（D 号） |
-| `docs/plan/` | 迁移计划、里程碑 M01–M08、修复轮 R1–R18b、门禁状态、待批准事项 |
+| `docs/plan/` | 迁移计划、里程碑 M01–M08、修复轮 R1–R23、门禁状态、待批准事项 |
 | `docs/engineering/` | 实现说明、测试与评测方法、开发流程 |
 | `docs/legacy-qiwe-agent/` | 上游仓库原有文档（T0–T7、D1–D5 验收等，背景资料） |
 
@@ -59,7 +59,8 @@ OpenDot 挂点测试 `tests/opendot/opendot-hook-m07.test.ts` 需要一份 OpenD
 
 ## 未完成事项（摘要）
 
-- R18b 准入时记下的 3 项小问题（D171–D173：汇总词不当客户名、新客户追问没回答时又来新消息、没见过的否定补报说法），排进下一轮修，不挡准入。
+- R23 之后按 D184 收口：只修会记错账或卡住员工的问题，文案类改动放到上线后（上线后清单见 [docs/plan/status.md](docs/plan/status.md)）。
+- 公开决策记录目前只同步到 D173；R19–R23 用到的 D174–D185 摘要见 [docs/plan/status.md](docs/plan/status.md)。
 - `integrations/native` 的 node:test 用例按 hanyu 的决定归档，不纳入 CI（#12）。
 - 门③（查询直接办）和门④（延迟）要接入真实模型、在正式实测中判定，离线阶段只记录数字。
 - 接入企微、迁移到腾讯云、正式实测、OpenDot 隔离迁移与切换都还没开始，需要 hanyu 逐项批准，见 [docs/plan/approvals.md](docs/plan/approvals.md)。

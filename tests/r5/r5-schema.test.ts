@@ -5,8 +5,8 @@ import {
   MIGRATION_009_PATH, MIGRATION_009_SQL,
 } from '../../src/role-eval/schema-migrations.js';
 
-it('R5：009 文件与嵌入 String.raw 字节一致；R6 起 LATEST=10', () => {
-  expect(LATEST_SCHEMA_VERSION).toBe(10);
+it('R5：009 文件与嵌入 String.raw 字节一致；R6 起 LATEST=11', () => {
+  expect(LATEST_SCHEMA_VERSION).toBe(11);
   expect(readFileSync(MIGRATION_009_PATH, 'utf8')).toBe(MIGRATION_009_SQL);
   expect(readFileSync(MIGRATION_009_DOWN_PATH, 'utf8')).toBe(MIGRATION_009_DOWN_SQL);
 });

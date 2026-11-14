@@ -32,7 +32,7 @@ it('真实PG：009 升：integer→numeric(14,2)；recorded/void/业绩 改写�
     (entry_id, store_id, business_day, customer_name, amount, amount_type, owner_person_id, owner_name, reporter_person_id, note, status, disputed, created_at)
     VALUES ('e-void','s-b','2026-11-12','李姐',100,'业绩','p-zhao','小赵','p-zhao','','void',false,'2026-11-12T02:00:00.000Z')`);
   expect(await schemaVersion(sql.client.query.bind(sql.client))).toBe(8);
-  expect(await migrateUp(sql.client, { apply: true })).toMatchObject({ from: 8, to: 10, applied: true });
+  expect(await migrateUp(sql.client, { apply: true })).toMatchObject({ from: 8, to: 11, applied: true });
   const cols = await rawQuery(url, `SELECT data_type, numeric_precision, numeric_scale FROM information_schema.columns
     WHERE table_schema='front_claw_perf' AND table_name='performance_entries' AND column_name='amount'`);
   expect(cols[0]).toMatchObject({ data_type: 'numeric', numeric_precision: 14, numeric_scale: 2 });
@@ -106,6 +106,8 @@ it('真实PG：680.5 与 0.1+0.2 经 numeric 字符串进出，合计精确；�
   await store.saveStoreTarget({ storeId: 's-b', periodMonth: '2026-11', amount: 5_000_000, setBy: 'p-wang-yj', updatedAt: '2026-11-12T02:00:00.000Z' });
   expect((await store.getStoreTarget('s-b', '2026-11'))?.amount).toBe(5_000_000);
   // 先撤 010（10→9），009 的角分检查才生效；失败则版本停在 9、数据不动。
+  // 011 尚未发布，新增员工 pending 唯一索引及 D183 序列；先撤它，再保持原 010/009 语义。
+  expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 11, to: 10, applied: true });
   expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 10, to: 9, applied: true });
   await expect(migrateDown(sql.client, { apply: true })).rejects.toThrow(/cannot_down_fractional_amount/);
   expect(await schemaVersion(sql.client.query.bind(sql.client))).toBe(9);
@@ -119,6 +121,8 @@ it('真实PG：整元 009 down → integer + recorded + 业绩，store_targets �
     (entry_id, store_id, business_day, customer_name, amount, amount_type, owner_person_id, owner_name, reporter_person_id, note, status, disputed, created_at)
     VALUES ('e-w','s-b','2026-11-12','张姐','680.00','consultant','p-zhao','小赵','p-zhao','','confirmed',false,'2026-11-12T02:00:00.000Z')`);
   await rawQuery(url, `INSERT INTO ${PERFORMANCE_SCHEMA}.store_targets (store_id, period_month, amount, set_by, updated_at) VALUES ('s-b','2026-11','50000.00','p','2026-11-12T02:00:00.000Z')`);
+  // 011 尚未发布，新增员工 pending 唯一索引及 D183 序列；先撤它，再保持原 010/009 语义。
+  expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 11, to: 10, applied: true });
   expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 10, to: 9, applied: true });
   expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 9, to: 8, applied: true });
   const cols = await rawQuery(url, `SELECT data_type FROM information_schema.columns WHERE table_schema='front_claw_perf' AND table_name='performance_entries' AND column_name='amount'`);

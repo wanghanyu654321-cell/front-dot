@@ -31,7 +31,8 @@ export interface RouteDecision { target: RouteTarget; label: IntentLabel; intent
 export interface MarketingPolicy { marketingEnabled: boolean; marketingGranted: boolean; }
 
 const ORDER: readonly Intent[] = ['report', 'followup', 'progress', 'result', 'appointment', 'summary', 'correction', 'target', 'marketing', 'chitchat'];
-const SHORT_CONFIRM = /^(?:对|对的|确认|确认保存|是|是的|好|好的|嗯|嗯嗯|没错|可以|ok|取消|全部确认)[。.!！~～]*$/i;
+// D172：否定新客户追问也进入原店务循环，由持久追问状态决定是否撤销。
+const SHORT_CONFIRM = /^(?:对|对的|确认|确认保存|是|是的|不是|好|好的|嗯|嗯嗯|没错|可以|ok|取消|全部确认)[。.!！~～]*$/i;
 const ENTRY_LINE = ENTRY_LINE_PATTERN;
 const REPORT_WORDS = /报数|报一下|要报|报.{0,4}的?数|记一下|记上|帮我记|开单|做了\s*\d|成交\s*\d|报.{0,3}业绩/;
 const RESULT_WORDS = /入账结果|入账了[吗没么]?|入账成功|入账.{0,2}[没吗]|那笔.{0,6}入账/;

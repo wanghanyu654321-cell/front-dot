@@ -1,3 +1,4 @@
+import { capturePendingArrival } from '../role-eval/pending-order.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { CAPABILITIES, type Capability } from '../role-eval/access-policy.js';
@@ -163,6 +164,9 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
   }
 
   function receive(event: InboundText): void {
+    const pendingArrival = boot.handler.employeeLoop ? capturePendingArrival(boot.store) : undefined;
+    void pendingArrival?.catch(() => {});
+    const arrivedAt = event.createTime === undefined ? undefined : new Date(event.createTime * 1000).toISOString();
     const id = operationIdFor(event);
     if (closing) { stats.droppedClosing++; return; }
     // 旧消费者（租约本地已过期）不做任何业务写入，也不回复。
@@ -180,7 +184,7 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
       if (!binding) { stats.unbound++; replies = [UNBOUND]; op.state = 'completed'; }
       else {
         const result = await boot.handler.handleMessage({
-          memberId: event.memberId, text: event.text, messageId: event.messageId,
+          memberId: event.memberId, text: event.text, messageId: event.messageId, arrivedAt, pendingArrival,
           sessionId: sha(['opendot', binding.corpId, event.botId, event.memberId, binding.accountId]),
           bindingVersion: binding.version, signal: op.controller.signal, deadline: performance.now() + requestTimeoutMs,
           ...(op.fence ? { fence: op.fence } : {}),

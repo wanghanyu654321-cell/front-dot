@@ -1,9 +1,10 @@
+import { capturePendingArrival } from './pending-order.js';
 import { createHash } from 'node:crypto';
 import { businessDate, DEFAULT_BUSINESS_CUTOFF, DEFAULT_TIME_ZONE } from './metrics.js';
 import { classifyWithSemantic, decideRoute, type RouteDecision, type SemanticClassifier } from './intent-router.js';
 import { createRequestBudget, type TerminalState, type WorkResult } from './request-budget.js';
 import { createRouteLog, type RouteLogRecord } from './route-log.js';
-import type { EmployeeMessage } from './employee-loop.js';
+import type { EmployeeMessage, EmployeeLoopResult, PreflightReply } from './employee-loop.js';
 import type { HandleResult, WecomBotHandlerOptions } from './wecom-bot-unified-handler.js';
 import type { Capability } from './access-policy.js';
 import { checkGateNow } from './commit-gate.js';
@@ -23,8 +24,7 @@ import {
 
 import { courtesyReply, isManagedQueryPhrase, isSelfProgressQuery, isStorePerfQuery, NOT_TODAY_REPLY, pastDayReportPhrase, scopeRefusal } from './scope-refusal.js';
 import { stripNegatedMakeupPhrases } from './standard-line.js';
-import { askForTextImpurity, textLevelImpurity } from './confirmable-draft-gate.js';
-import { collectConfirmedLedgerNames } from './store-customer-roster.js';
+import { textLevelImpurity } from './confirmable-draft-gate.js';
 
 /** 营销能力端口：只有明确营销意图、enabled 且本人获 marketing 授权才调用；端口拿不到 store。 */
 export interface MarketingPort {
@@ -65,7 +65,7 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
  * 外层统一截止、唯一终态、最终回复去重与分段日志。分类器与营销端口都不写库；写库只在 M01 入口。
  */
 export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?: EmployeeRouterOptions },
-  loop: (input: EmployeeMessage) => Promise<HandleResult>) {
+  loop: (input: EmployeeMessage, preflightReply?: PreflightReply) => Promise<EmployeeLoopResult>) {
   const router = options.router ?? {};
   const modelRuntime = loadModelRuntimeConfig(router.modelConfig);
   const modelClassifier = router.modelClassify ?? createModelClassifier(modelRuntime);
@@ -120,12 +120,21 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
   }
 
   return async (input: EmployeeMessage): Promise<RoutedHandleResult> => {
+    const pendingArrival = input.pendingArrival ?? capturePendingArrival(options.store);
+    void pendingArrival.catch(() => {});
+    input = { ...input, pendingArrival };
     const requestId = typeof input.messageId === 'string' && input.messageId.trim() ? input.messageId : `anonymous-${++anonymous}`;
     const fingerprint = hash([input.memberId, input.sessionId ?? null, input.bindingVersion ?? null, input.text]);
     log.inbound(requestId);
     let decision: RouteDecision = { target: 'clarify', label: 'clarify', intents: [] };
     let modelCalled = false;
     const run = await budget.run(requestId, fingerprint, { signal: input.signal, deadline: input.deadline }, async child => {
+      await pendingArrival;
+      if (child.signal.aborted || performance.now() >= child.deadline) throw Error('arrival_cancelled');
+      const preflightResponse = async (reply: string, kind: 'ask' | 'reply' = 'reply'): Promise<WorkResult> => {
+        const handled = await loop({ ...input, signal: child.signal, deadline: child.deadline }, { text: reply, kind });
+        return { reply: handled.replies.join('\n'), target: 'store', ...(handled.access ? { access: handled.access } : {}) };
+      };
       const classified = await classifyWithSemantic(input.text, {
         businessDay: businessDate(options.now(), cutoff, timeZone), semantic: router.semantic, signal: child.signal, deadline: child.deadline,
       });
@@ -143,16 +152,16 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
         // R18 / 移交项 3：结论与措辞都来自单闸模块（与闸内同一个 textLevelImpurity），入口不自己判。
         const impurity = textLevelImpurity(input.text, today);
         if (impurity) {
-          const person = await options.store.getPersonByMember(input.memberId);
-          const confirmed = person ? await collectConfirmedLedgerNames(options.store, person.storeId) : new Set<string>();
-          return { reply: askForTextImpurity(impurity, input.text, confirmed) };
+          // D175：用同一 D152 文本结论先问，保留挂起项；宿主全局指纹仍先于本入口，budget 覆盖整轮。
+          const handled = await loop({ ...input, signal: child.signal, deadline: child.deadline });
+          return { reply: handled.replies.join('\n'), target: 'store', ...(handled.access ? { access: handled.access } : {}) };
         }
       }
-      if ((decision.target === 'clarify' || decision.target === 'store') && pastDayReportPhrase(input.text, today)) return { reply: NOT_TODAY_REPLY };
+      if ((decision.target === 'clarify' || decision.target === 'store') && pastDayReportPhrase(input.text, today)) return preflightResponse(NOT_TODAY_REPLY, 'ask');
       // R3/R4：越权/跨店/设目标 等 → 直接「不能做」+原因（店务路径进循环前也判一次）。
       if ((decision.target === 'clarify' || decision.target === 'store') && !isManagedQueryPhrase(input.text)) {
         const refused = await refusalFor(input.memberId, input.text);
-        if (refused) return { reply: refused };
+        if (refused) return preflightResponse(refused);
       }
       // R4：待答的预约称呼、或「改 N」选笔 —— 分类器可能当成澄清，仍进店务循环，避免丢掉上下文。
       if (decision.target === 'clarify') {
@@ -193,7 +202,7 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
         const chain = validateModelChain({ text: input.text, output });
         if (!chain.ok) {
           // 门②：金额不安全立刻追问，不执行。拿不准/schema 走默认澄清。
-          if (chain.reason === 'amount') return { reply: chain.ask };
+          if (chain.reason === 'amount') return preflightResponse(chain.ask, 'ask');
         } else {
           modelClassification = chain.classification;
           const label = chain.classification.intent === 'query' ? 'progress' as const
@@ -219,16 +228,21 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
           return { reply: handled.replies.join('\n'), ...(handled.ledgerSettled ? { ledgerSettled: true } : {}), target: 'store', ...(handled.access ? { access: handled.access } : {}) };
         }
         // R3：客套话短答一句，不写账、不追问。
-        case 'chitchat': return { reply: courtesyReply(input.text) ?? CHITCHAT_REPLY };
-        case 'marketing-unavailable': return { reply: MARKETING_UNAVAILABLE };
+        case 'chitchat': return preflightResponse(courtesyReply(input.text) ?? CHITCHAT_REPLY);
+        case 'marketing-unavailable': return preflightResponse(MARKETING_UNAVAILABLE);
         case 'marketing': {
+          // D175/D179：沿用循环身份预检，只消费过期项；有效挂起项保留。
+          const prepared = await loop({ ...input, signal: child.signal, deadline: child.deadline }, '');
+          if (!prepared.newMessagePrepared) return { reply: prepared.replies.join('\n'), target: 'store', ...(prepared.access ? { access: prepared.access } : {}) };
+          const finish = (reply: string) => prepared.expiredReminder ? `${reply}\n${prepared.expiredReminder}` : reply;
+          if (child.signal.aborted || performance.now() >= child.deadline) return { reply: finish(MARKETING_UNAVAILABLE) };
           modelCalled = true;
           const text = await marketing!.handle({ memberId: input.memberId, text: input.text, signal: child.signal, deadline: child.deadline });
           // R1（M03-05）：发出前同一入口门再判；生成期间撤权/停用 → 不发出生成结果。
-          if (!await marketingActor(input.memberId, grantedActor!)) return { reply: MARKETING_UNAVAILABLE };
-          return { reply: typeof text === 'string' && text.trim() ? text.trim() : `${F}：这次没有生成内容，没有写入任何账目。`, target: 'marketing', access: { capability: 'marketing', storeIds: [grantedActor!.storeId] } };
+          if (!await marketingActor(input.memberId, grantedActor!)) return { reply: finish(MARKETING_UNAVAILABLE) };
+          return { reply: finish(typeof text === 'string' && text.trim() ? text.trim() : `${F}：这次没有生成内容，没有写入任何账目。`), target: 'marketing', access: { capability: 'marketing', storeIds: [grantedActor!.storeId] } };
         }
-        default: return { reply: decision.ask ?? (decision.intents.length > 1 ? MULTI_REPLY : CLARIFY_REPLY) };
+        default: return preflightResponse(decision.ask ?? (decision.intents.length > 1 ? MULTI_REPLY : CLARIFY_REPLY), 'ask');
       }
     }, (state): WorkResult => ({
       reply: decision.target === 'store'

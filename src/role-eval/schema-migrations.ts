@@ -337,7 +337,18 @@ ALTER TABLE front_claw_perf.performance_entries
   DROP COLUMN IF EXISTS source_draft_id,
   DROP COLUMN IF EXISTS source_ordinal;
 `;
-export const LATEST_SCHEMA_VERSION = 10;
+export const MIGRATION_011_PATH = 'migrations/011_front_claw_pending_reporter.sql';
+export const MIGRATION_011_DOWN_PATH = 'migrations/011_front_claw_pending_reporter.down.sql';
+export const MIGRATION_011_SQL = String.raw`-- D174：按员工跨门店、跨会话约束；存量冲突须先审查，不静默作废业务数据。
+CREATE SEQUENCE IF NOT EXISTS front_claw_perf.pending_order_seq AS bigint NO CYCLE CACHE 1;
+CREATE UNIQUE INDEX performance_drafts_pending_reporter_unique
+  ON front_claw_perf.performance_drafts (reporter_person_id) WHERE status = 'pending';
+`;
+export const MIGRATION_011_DOWN_SQL = String.raw`-- 仅撤销本次索引和序列，不修改业务行。
+DROP INDEX IF EXISTS front_claw_perf.performance_drafts_pending_reporter_unique;
+DROP SEQUENCE IF EXISTS front_claw_perf.pending_order_seq;
+`;
+export const LATEST_SCHEMA_VERSION = 11;
 export const sqlChecksum = (sql: string) => createHash('sha256').update(sql).digest('hex');
 
 type Query = SqlClient['query'];
@@ -366,7 +377,7 @@ export function baselineStatements(sql = PERFORMANCE_MIGRATION_SQL): string[] {
 
 export interface SchemaStep { from: number; to: number; applied: boolean; dryRun: boolean }
 
-/** 升到最新（v10）：锁 → 007 基线 → 008 → 009 → 010（已应用则核对校验和）。apply=false 时在事务里执行后整体回滚，只报告。 */
+/** 升到最新（v11）：锁 → 007 基线 → 008 → 009 → 010 → 011（已应用则核对校验和）。apply=false 时在事务里执行后整体回滚，只报告。 */
 async function checksumAt(query: Query, version: number, expected: string): Promise<void> {
   const row = await query<{ checksum: string }>(`SELECT checksum FROM ${PERFORMANCE_SCHEMA}.schema_migrations WHERE version = $1`, [version]);
   if (row.rows[0] && row.rows[0].checksum !== expected) throw Error('migration_checksum_mismatch');
@@ -380,7 +391,8 @@ export async function migrateUp(client: SqlClient, options: { apply: boolean; ba
     if (current >= 8) await checksumAt(query, 8, sqlChecksum(MIGRATION_008_SQL));
     if (current >= 9) await checksumAt(query, 9, sqlChecksum(MIGRATION_009_SQL));
     if (current >= 10) await checksumAt(query, 10, sqlChecksum(MIGRATION_010_SQL));
-    if (current >= 10) return { from, to: current, applied: false, dryRun: !options.apply };
+    if (current >= 11) await checksumAt(query, 11, sqlChecksum(MIGRATION_011_SQL));
+    if (current >= 11) return { from, to: current, applied: false, dryRun: !options.apply };
     if (current < 8) {
       await query(MIGRATION_008_SQL);
       await query(`INSERT INTO ${PERFORMANCE_SCHEMA}.schema_migrations (version, name, checksum) VALUES (7, '007_front_claw_perf', $1) ON CONFLICT (version) DO NOTHING`, [sqlChecksum(options.baseline ?? PERFORMANCE_MIGRATION_SQL)]);
@@ -392,9 +404,13 @@ export async function migrateUp(client: SqlClient, options: { apply: boolean; ba
       await query(`INSERT INTO ${PERFORMANCE_SCHEMA}.schema_migrations (version, name, checksum) VALUES (9, '009_front_claw_amounts', $1)`, [sqlChecksum(MIGRATION_009_SQL)]);
       current = 9;
     }
-    await query(MIGRATION_010_SQL);
-    await query(`INSERT INTO ${PERFORMANCE_SCHEMA}.schema_migrations (version, name, checksum) VALUES (10, '010_front_claw_source_draft', $1)`, [sqlChecksum(MIGRATION_010_SQL)]);
-    return { from, to: 10, applied: true, dryRun: !options.apply };
+    if (current < 10) {
+      await query(MIGRATION_010_SQL);
+      await query(`INSERT INTO ${PERFORMANCE_SCHEMA}.schema_migrations (version, name, checksum) VALUES (10, '010_front_claw_source_draft', $1)`, [sqlChecksum(MIGRATION_010_SQL)]);
+    }
+    await query(MIGRATION_011_SQL);
+    await query(`INSERT INTO ${PERFORMANCE_SCHEMA}.schema_migrations (version, name, checksum) VALUES (11, '011_front_claw_pending_reporter', $1)`, [sqlChecksum(MIGRATION_011_SQL)]);
+    return { from, to: 11, applied: true, dryRun: !options.apply };
   });
 }
 
@@ -403,6 +419,11 @@ export async function migrateDown(client: SqlClient, options: { apply: boolean }
   return inTransaction(client, options.apply, async query => {
     await advisoryLock(query, SCHEMA_LOCK);
     const from = await schemaVersion(query);
+    if (from >= 11) {
+      await query(MIGRATION_011_DOWN_SQL);
+      await query(`DELETE FROM ${PERFORMANCE_SCHEMA}.schema_migrations WHERE version = 11`);
+      return { from, to: 10, applied: true, dryRun: !options.apply };
+    }
     if (from >= 10) {
       await query(MIGRATION_010_DOWN_SQL);
       await query(`DELETE FROM ${PERFORMANCE_SCHEMA}.schema_migrations WHERE version = 10`);

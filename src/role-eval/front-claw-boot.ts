@@ -1,3 +1,4 @@
+import { capturePendingArrival } from './pending-order.js';
 import { statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -150,6 +151,7 @@ export function createStoreBusinessPort(store: PerformanceStore, handler: Return
   const employeeLoop = handler.employeeLoop;
   return {
     employeeLoop,
+    captureArrival: () => capturePendingArrival(store),
     async remember(actor: StoreBusinessActor) {
       if (employeeLoop) {
         // 已认证上下文只核对既有绑定，不能在消息处理时补造人员档案。
