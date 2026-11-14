@@ -27,8 +27,8 @@ it('AUDIT regression safe (R3): stale A cannot void a pending draft after B has 
 });
 it('AUDIT regression safe (R3): stale A cannot create a new draft after B has acquired the lease', async()=>{
   const w=await memoryWorld(), c=manualClock(), a=await start(w,c,'A');
-  const g=gate(), original=w.store.saveDraft.bind(w.store);
-  const spy=vi.spyOn(w.store,'saveDraft').mockImplementationOnce(async (...args)=>{g.hit();await g.wait;return original(...args);});
+  const g=gate(), original=w.store.replacePendingReport.bind(w.store);
+  const spy=vi.spyOn(w.store,'replacePendingReport').mockImplementationOnce(async (...args)=>{g.hit();await g.wait;return original(...args);});
   a.channel.send('m-zhao',sheet,'report');await g.reached;c.advance(30001);
   const b=await start(w,c,'B');expect(b.service.state()).toBe('active');
   expect(await w.store.listDrafts()).toHaveLength(0);g.release();await a.service.idle();

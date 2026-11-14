@@ -10,8 +10,10 @@ import { expect, it } from 'vitest';
  */
 type Kind = 'consumer_fenced' | 'consumer_compensation' | 'dispatcher' | 'admin_or_legacy' | 'lease';
 export const REGISTRY: Record<string, { kind: Kind; note: string }> = {
+  replacePendingReport: { kind: 'consumer_fenced', note: 'R23 D174：fencedWriteIn + 员工行锁 + 原追问 CAS + 作废旧项并保存新项' },
   saveDraft: { kind: 'consumer_fenced', note: '新建/覆盖草稿：fencedWrite（条件锁读租约 + INSERT…SELECT WHERE EXISTS 租约）' },
   transitionPendingDraft: { kind: 'consumer_fenced', note: 'pending→confirming/void/conflict：fencedWrite + UPDATE … AND EXISTS 租约' },
+  compareAndSetPendingAsk: { kind: 'consumer_fenced', note: 'R22 追问版本 CAS：fencedWrite + 原值/过期/到达时间条件 UPDATE' },
   setConfig: { kind: 'consumer_fenced', note: '操作记录（回复前后的持久化）：fencedWrite + INSERT…SELECT WHERE EXISTS 租约；不带 fence 的是管理/旧入口调用' },
   commitConfirmingDraft: { kind: 'consumer_fenced', note: '入账：同一事务 guard 快照 + closeConfirming 条件 UPDATE AND EXISTS 租约' },
   commitConfirmingTarget: { kind: 'consumer_fenced', note: '目标：同上' },

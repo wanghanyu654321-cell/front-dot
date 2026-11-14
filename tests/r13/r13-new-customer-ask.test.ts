@@ -48,13 +48,15 @@ describe('D139 新客户首报只问一句，不附草稿', () => {
     expect(again).not.toMatch(/还没入账/);
   });
 
-  it('对「是新客户」回「对」或「不是」或「好的」：不出草稿、不写入、不进名单', async () => {
-    for (const ans of ['对', '不是', '好的', '嗯']) {
+  // D172（20:08 补充）：回「对」现算肯定且只出草稿；否定撤销，其余按新消息处理。
+  // 肯定状态矩阵在 tests/r19/r19-state-and-gate.test.ts 覆盖。
+  it('对新客户追问回否定或无关答复：不出草稿、不入账、不进名单', async () => {
+    for (const ans of ['不是', '好的', '嗯']) {
       const w = await worldM05();
       const before = JSON.stringify(await w.snapshot());
       expect(await w.call('m-zhao', '周雅琴：300')).toBe('Front Claw：是新客户「周雅琴」吗？');
       const r = await w.call('m-zhao', ans);
-      expect(r, ans).toMatch(/没有写入/);
+      expect(r, ans).toMatch(/没有记|没有写入/); // D172：否定固定回复为「好的，这条没有记。」
       expect(r, ans).not.toMatch(/还没入账/);
       expect(JSON.stringify(await w.snapshot()), ans).toBe(before);
       expect((await collectKnownCustomerNames(w.base, 's-b')).has('周雅琴')).toBe(false);

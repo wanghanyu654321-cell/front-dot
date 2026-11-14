@@ -31,8 +31,8 @@ it('R3-S1：A 停在“确认”写入前 → B 接管 → 放行 A：草稿仍 
 
 it('R3-S2：A 处理中被接管 → A 收尾的操作记录写不进（不覆盖新持有者的记录），租约行不变', async () => {
   const w = await memoryWorld(), c = manualClock(), a = await start(w, c, 'A');
-  const g = gate(), original = w.store.saveDraft.bind(w.store);
-  const spy = vi.spyOn(w.store, 'saveDraft').mockImplementationOnce(async (...args) => { g.hit(); await g.wait; return original(...args); });
+  const g = gate(), original = w.store.replacePendingReport.bind(w.store);
+  const spy = vi.spyOn(w.store, 'replacePendingReport').mockImplementationOnce(async (...args) => { g.hit(); await g.wait; return original(...args); });
   a.channel.send('m-zhao', sheet, 'report'); await g.reached;
   c.advance(30_001);
   const b = await start(w, c, 'B'); const lease = await w.store.getConfig(CONSUMER_LEASE_KEY);

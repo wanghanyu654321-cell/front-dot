@@ -73,7 +73,7 @@ it('真实PG：在 M01–M07 流程造出的旧库上迁移——只读源、预
   expect((await postflight(q(src), q(tgt.sql))).ok).toBe(true);
   // 目标库上派发：历史通知一条都不发（全被抑制；sent/unknown 原样）。
   const target8 = await open(tgt.url);
-  expect(target8.schemaVersion).toBe(10);
+  expect(target8.schemaVersion).toBe(11);
   const f = fakeSender();
   for (const offset of [0, 3_600_000, 86_400_000]) await dispatcher(target8.store, f.sender, 'tgt', T0 + offset).tick();
   expect(f.wire).toEqual([]);
@@ -189,6 +189,8 @@ it('真实PG：迁移后继续营业（入账/更正/目标/预约/sent/unknown�
   await destStore.close();
 
   // R1：同库降回 v7（一次一版：10→9→8→7）。业务行一行不少；009 down 会把 confirmed/consultant 还原为 recorded/业绩。
+  // D174：先撤 011，再沿用原有降档验证。
+  expect(await migrateDown(tgt.sql.client, { apply: true })).toMatchObject({ from: 11, to: 10, applied: true });
   expect(await migrateDown(tgt.sql.client, { apply: true })).toMatchObject({ from: 10, to: 9, applied: true });
   expect(await migrateDown(tgt.sql.client, { apply: true })).toMatchObject({ from: 9, to: 8, applied: true });
   expect(await migrateDown(tgt.sql.client, { apply: true })).toMatchObject({ from: 8, to: 7, applied: true });
@@ -227,7 +229,7 @@ it('真实PG：CLI 全流程默认 dry-run（schema-up/import/export-rollback �
   expect((await run('schema-status')).report).toMatchObject({ version: 0 });
   expect((await run('schema-up')).report).toMatchObject({ dryRun: true });
   expect((await run('schema-status')).report).toMatchObject({ version: 0 });
-  expect((await run('schema-up', '--apply')).report).toMatchObject({ to: 10, applied: true });
+  expect((await run('schema-up', '--apply')).report).toMatchObject({ to: 11, applied: true });
   expect((await run('preflight')).code).toBe(0);
   expect((await run('import')).report).toMatchObject({ dryRun: true, inserted: 0 });
   expect(await countWhere(tgtUrl, `SELECT count(*)::int AS n FROM front_claw_perf.performance_entries`)).toBe(0);
@@ -242,7 +244,7 @@ it('真实PG：CLI 全流程默认 dry-run（schema-up/import/export-rollback �
     [SOURCE_HOST_ENV]: tgtParsed.hostname, [SOURCE_PORT_ENV]: tgtParsed.port,
     [ALLOWED_ENV]: `${tgtParsed.hostname}:${tgtParsed.port}/${tgtParsed.pathname.replace(/^\//, '')}`,
   })).report).toMatchObject({ error: 'source_same_as_target' });
-  expect((await run('schema-down')).report).toMatchObject({ dryRun: true, from: 10 });
+  expect((await run('schema-down')).report).toMatchObject({ dryRun: true, from: 11 });
   const text = JSON.stringify(out);
   expect(text).not.toContain('postgres://');
   expect(text).not.toContain(srcUrl.split('@')[1]!);

@@ -1,3 +1,4 @@
+import { sequenceBefore } from './pending-order.js';
 import type {
   AliasRecord, Appointment, CommitGuard, Draft, DraftPayload, EntryFilter, EntryPatch, GateSnapshot, LedgerCommit, LedgerEntry,
   Notification, PerformanceStore, Person, Revision, RevisionMeta, SendSnapshot, StoreTarget, Target, WriteFence,
@@ -43,6 +44,8 @@ export async function migratePerformance(client: SqlClient, sql = PERFORMANCE_MI
   await client.transaction(async query => {
     await query('SELECT pg_advisory_xact_lock($1, $2)', [...SCHEMA_LOCK]);
     for (const statement of statements) await query(statement);
+    // 旧合成宿主只装配 007；保留其加法启动兼容。文件凭据路径不执行此 DDL，生产由 011 显式安装。
+    await query(`CREATE SEQUENCE IF NOT EXISTS ${PERFORMANCE_SCHEMA}.pending_order_seq AS bigint NO CYCLE CACHE 1`);
   });
 }
 
@@ -219,10 +222,10 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
   async function revertIfCurrentHolder(query: SqlClient['query'], draft: Draft, fence: WriteFence | undefined): Promise<boolean> {
     try {
       return await fencedWriteIn(query, fence, async (q, lease) => {
-        const l = lease(4);
+        const l = lease(6);
         const back = await q(
-          `UPDATE ${relation('performance_drafts')} SET status=$1, closed_at=$2 WHERE draft_id=$3 AND status=$4${l.sql} RETURNING draft_id`,
-          ['pending', null, draft.draftId, 'confirming', ...l.params],
+          `UPDATE ${relation('performance_drafts')} SET status=$1, closed_at=$2 WHERE draft_id=$3 AND status=$4 AND NOT EXISTS (SELECT 1 FROM ${relation('performance_drafts')} other WHERE other.reporter_person_id=$5 AND other.status='pending')${l.sql} RETURNING draft_id`,
+          ['pending', null, draft.draftId, 'confirming', draft.reporterPersonId, ...l.params],
         );
         return back.rows.length === 1;
       });
@@ -263,7 +266,12 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
       throw error;
     }
   }
-  return {
+  const store: PerformanceStore = {
+    async capturePendingArrival() {
+      // 替代循环已有的营业配置读取，正常确认不增加往返；序列与草稿 INSERT 共用。
+      const row = (await client.query<{ sequence: string; hours: string | null }>(`SELECT nextval('${PERFORMANCE_SCHEMA}.pending_order_seq')::text AS sequence, (SELECT value FROM ${relation('performance_config')} WHERE key=$1) AS hours`, ['front-claw-store-hours'])).rows[0]!;
+      return { sequence: row.sequence, hours: row.hours };
+    },
     async savePerson(person) {
       await client.query(
         `INSERT INTO ${relation('performance_people')} (person_id, account_id, member_id, display_name, store_id, store_name, tier, roles_json, active)
@@ -435,12 +443,18 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
         return 'conflict';
       }
     },
-    async transitionPendingDraft(expected, next, fence) {
+    async transitionPendingDraft(expected, next, fence, conditions) {
       return fencedWrite(fence, async (query, lease) => {
-        const l = lease(9);
+        const params: unknown[] = [next.status, JSON.stringify(next.payload), next.closedAt, expected.draftId, 'pending', expected.reporterPersonId, expected.storeId, JSON.stringify(expected.payload)];
+        let condition = '';
+        if (conditions?.expiredAt) { params.push(conditions.expiredAt); condition += ` AND expires_at::timestamptz<=$${params.length}::timestamptz`; }
+        if (conditions?.arrivedAt) { params.push(conditions.arrivedAt); condition += ` AND created_at::timestamptz<$${params.length}::timestamptz`; }
+        if (conditions?.arrivedSequence) { params.push(conditions.arrivedSequence); condition += ` AND (payload_json::jsonb->'employeeContext'->>'pendingSequence')::bigint<$${params.length}::bigint`; }
+        if (conditions?.unexpiredAt) { params.push(conditions.unexpiredAt); condition += ` AND expires_at::timestamptz>$${params.length}::timestamptz`; }
+        const l = lease(params.length + 1);
         const { rows } = await query(
-          `UPDATE ${relation('performance_drafts')} SET status=$1, payload_json=$2, closed_at=$3 WHERE draft_id=$4 AND status=$5 AND reporter_person_id=$6 AND store_id=$7 AND payload_json=$8${l.sql} RETURNING draft_id`,
-          [next.status, JSON.stringify(next.payload), next.closedAt, expected.draftId, 'pending', expected.reporterPersonId, expected.storeId, JSON.stringify(expected.payload), ...l.params],
+          `UPDATE ${relation('performance_drafts')} SET status=$1, payload_json=$2, closed_at=$3 WHERE draft_id=$4 AND status=$5 AND reporter_person_id=$6 AND store_id=$7 AND payload_json::jsonb=$8::jsonb${condition}${l.sql} RETURNING draft_id`,
+          [...params, ...l.params],
         );
         return rows.length === 1;
       });
@@ -676,7 +690,50 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
       );
       return rows.length > 0;
     },
+    async replacePendingReport(write, fence) {
+      const w = clone(write);
+      return client.transaction(query => fencedWriteIn(query, fence, async (q, lease) => {
+        // 员工行锁统一串行化草稿与各会话 config；唯一索引兜底不走本协议的草稿写入。
+        await q(`SELECT * FROM ${relation('performance_people')} WHERE person_id=$1 FOR UPDATE`, [w.reporterPersonId]);
+        const no = { saved: false, drafts: [], asks: [] };
+        if (w.draft && (await q(`SELECT * FROM ${relation('performance_drafts')} WHERE draft_id=$1`, [w.draft.draftId])).rows.length) return no;
+        const prefix = `employee-loop:new-customer-ask:${w.reporterPersonId}:`;
+        const configs = (await q(`SELECT * FROM ${relation('performance_config')} WHERE starts_with(key,$1) FOR UPDATE`, [prefix])).rows as Row[];
+        if (w.expectedAsk) {
+          const e = w.expectedAsk, raw = configs.find(r => r.key === e.key)?.value;
+          if (raw !== e.value) return no;
+          const a = JSON.parse(String(raw));
+          if (!(sequenceBefore(a.issuedSequence, e.arrivedSequence)) || !(Date.parse(a.expiresAt ?? '') > Date.parse(w.at))) return no;
+          const consumed = await q(`UPDATE ${relation('performance_config')} SET value=$1 WHERE key=$2 AND value=$3 AND (value::jsonb->>'issuedSequence')::bigint<$4::bigint AND (value::jsonb->>'expiresAt')::timestamptz>$5::timestamptz RETURNING key`, ['', e.key, e.value, e.arrivedSequence, w.at]);
+          if (consumed.rows.length !== 1) return no;
+        }
+        const rows = (await q(`SELECT * FROM ${relation('performance_drafts')} WHERE reporter_person_id=$1 AND status=$2 FOR UPDATE`, [w.reporterPersonId, 'pending'])).rows as Row[];
+        const drafts = rows.map(draftFrom), asks = configs.filter(r => !!r.value && r.key !== w.expectedAsk?.key);
+        // D174 冲突处理：事务内先作废原 pending，再插新项；不重试入账或未知业务结果。
+        for (const d of drafts) await q(`UPDATE ${relation('performance_drafts')} SET status=$1, closed_at=$2 WHERE draft_id=$3 AND status=$4`, ['void', w.at, d.draftId, 'pending']);
+        for (const a of asks) await q(`UPDATE ${relation('performance_config')} SET value=$1 WHERE key=$2 AND value=$3`, ['', a.key, a.value]);
+        const replaced = drafts.length > 0 || asks.length > 0;
+        if (w.draft) {
+          const d = w.draft;
+          d.createdAt = w.at;
+          if (replaced && 'employeeContext' in d.payload && d.payload.employeeContext) d.payload.employeeContext.replacedPending = true;
+          const l = lease(13);
+          await q(`INSERT INTO ${relation('performance_drafts')} (draft_id, reporter_person_id, store_id, business_day, expires_at, kind, payload_json, status, reminder, void_notice, created_at, closed_at)
+            SELECT $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,jsonb_set($7::jsonb,'{employeeContext,pendingSequence}',to_jsonb(nextval('front_claw_perf.pending_order_seq')::text))::text,$8::text,$9::text,$10::text,$11::text,$12::text WHERE TRUE${l.sql} ON CONFLICT (draft_id) DO NOTHING`,
+            [d.draftId, d.reporterPersonId, d.storeId, d.businessDay, d.expiresAt, d.kind, JSON.stringify(d.payload), d.status, d.reminder, d.voidNotice, d.createdAt, d.closedAt, ...l.params]);
+        }
+        if (w.ask) {
+          const a = JSON.parse(w.ask.value);
+          a.issuedAt = w.at;
+          if (replaced) a.replacedPending = true;
+          const l = lease(3);
+          await q(`INSERT INTO ${relation('performance_config')} (key, value) SELECT $1::text,jsonb_set($2::jsonb,'{issuedSequence}',to_jsonb(nextval('front_claw_perf.pending_order_seq')::text))::text WHERE TRUE${l.sql} ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, [w.ask.key, JSON.stringify(a), ...l.params]);
+        }
+        return { saved: true, drafts, asks: asks.map(r => String(r.value)) };
+      }));
+    },
     async saveDraft(draft, options) {
+      if (options?.pendingReport) return store.replacePendingReport(options.pendingReport, options.fence);
       await fencedWrite(options?.fence, async (query, lease) => {
         const l = lease(13);
         const inserted = await query(
@@ -870,6 +927,20 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
         `INSERT INTO ${relation('performance_config')} (key, value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING RETURNING key`, [key, value]);
       return result.rows.length === 1;
     },
+    async compareAndSetPendingAsk(key, expected, value, conditions, fence) {
+      assertWritableConfigKey(key);
+      return fencedWrite(fence, async (query, lease) => {
+        const params: unknown[] = [value, key, expected];
+        let condition = '';
+        if (conditions.expiredAt) { params.push(conditions.expiredAt); condition += ` AND (value::jsonb->>'expiresAt')::timestamptz<=$${params.length}::timestamptz`; }
+        if (conditions.arrivedAt) { params.push(conditions.arrivedAt); condition += ` AND (value::jsonb->>'issuedAt')::timestamptz<$${params.length}::timestamptz`; }
+        if (conditions.arrivedSequence) { params.push(conditions.arrivedSequence); condition += ` AND (value::jsonb->>'issuedSequence')::bigint<$${params.length}::bigint`; }
+        if (conditions.unexpiredAt) { params.push(conditions.unexpiredAt); condition += ` AND (value::jsonb->>'expiresAt')::timestamptz>$${params.length}::timestamptz`; }
+        const l = lease(params.length + 1);
+        const result = await query(`UPDATE ${relation('performance_config')} SET value=$1 WHERE key=$2 AND value=$3${condition}${l.sql} RETURNING key`, [...params, ...l.params]);
+        return result.rows.length === 1;
+      });
+    },
     async setConfig(key, value, fence) {
       assertWritableConfigKey(key);
       await fencedWrite(fence, async (query, lease) => {
@@ -882,6 +953,7 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
       });
     },
   };
+  return store;
 }
 
 function whereEntries(filter: EntryFilter | undefined): { sql: string; params: unknown[] } {

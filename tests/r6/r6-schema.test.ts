@@ -7,8 +7,8 @@ import {
 } from '../../src/role-eval/schema-migrations.js';
 
 describe('R6 009 / 010 迁移文本', () => {
-  it('文件与 String.raw 逐字节一致；LATEST=10', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(10);
+  it('文件与 String.raw 逐字节一致；LATEST=11', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(11);
     expect(readFileSync(MIGRATION_009_PATH, 'utf8')).toBe(MIGRATION_009_SQL);
     expect(readFileSync(MIGRATION_009_DOWN_PATH, 'utf8')).toBe(MIGRATION_009_DOWN_SQL);
     expect(readFileSync(MIGRATION_010_PATH, 'utf8')).toBe(MIGRATION_010_SQL);

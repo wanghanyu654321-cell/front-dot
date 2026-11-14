@@ -1,3 +1,4 @@
+import { capturePendingArrival, confirmationSequence, sequenceBefore, type PendingArrival } from './pending-order.js';
 import { pausePoint } from './pause-points.js';
 import { createHash } from 'node:crypto';
 import { createAssistantTools } from './assistant-tools.js';
@@ -23,7 +24,7 @@ import type { Fence } from './fencing.js';
 import { appointmentClause, clauseKind, compoundHead, compoundTail, isSelfProgressQuery, isStorePerfQuery, leftoverNote, NOT_TODAY_REPLY, selfProgressPhrase, type ClauseKind } from './scope-refusal.js';
 import { consumerWrites } from './consumer-writes.js';
 import { FencedWriteRejected } from './performance-store.js';
-import { resolveStoreHours, STORE_HOURS_KEY } from './store-hours.js';
+import { resolveStoreHours } from './store-hours.js';
 import { ranking, storeById, storeByName, storeSummary, unreported } from './store-queries.js';
 import { formatYuan } from './money.js';
 import { cannot } from './scope-refusal.js';
@@ -34,12 +35,16 @@ import { askForTextImpurity, bracketImpurity, evaluateConfirmableReportDraft, te
 import { collectConfirmedLedgerNames, collectKnownCustomerNames } from './store-customer-roster.js';
 import { isYesNewCustomerReply, newCustomerAskKey, newCustomerAskReply, notCustomerNameAskReply } from './customer-name-policy.js';
 import { customerNameConflicts } from './customer-conflict.js';
+import { advancePendingSlot, pendingConfirmationReminder, pendingExpired, reportLabels, type SavedNewCustomerAsk, type PendingReportAdmission } from './pending-slot.js';
 import { validateModelChain, isReadOnlyQuery, type ModelClassification } from './model-classify.js';
 
 
 export const EMPLOYEE_LOOP_CONFIG = 'employee-loop:m01';
 export interface EmployeeMessage {
   memberId: string; text: string;
+  /** 可信入口最早接收时刻；不能取排队后的处理时刻。 */
+  arrivedAt?: string | undefined;
+  pendingArrival?: Promise<Readonly<PendingArrival>> | undefined;
   /** 由已认证入口传入，不能从聊天正文构造。 */
   messageId?: string; sessionId?: string; bindingVersion?: number;
   signal?: AbortSignal; deadline?: number;
@@ -48,12 +53,16 @@ export interface EmployeeMessage {
   /** R7：入口分类接口已通过 schema 的结果；循环内再过校验链。默认桩不会把执行结果送到这里。 */
   modelClassification?: ModelClassification;
 }
+/** 仅入口内部使用：新消息已完成挂起位迁移，才可启动后续非店务工作。 */
+export type PreflightReply = string | { text: string; kind: 'ask' | 'reply' };
+export type EmployeeLoopResult = HandleResult & { newMessagePrepared?: boolean; expiredReminder?: string };
 type Access = NonNullable<HandleResult['access']>;
 interface Tag { access?: Access }
 /** R3：消费租约已不属于本实例时的结果（适配器不会把它发出去）。 */
 /** M01 入口的通用提示（没认出要办的店务）；R3：统一入口据此再判一次越权/跨店。 */
 /** R18 / D157：原 shouldHandCompoundToModel（改账/预约/目标/宣传/复述保留草稿）已删除——复合句一律整句先问，由单闸判定。 */
 
+const newerPendingReply = (labels: string[]) => labels.map(label => `上一笔已作废，新的一笔「${label}」请看清后再回「对」。`).join('\n');
 export const REPORT_HINT = 'Front Claw：请发标准清单，例如「11号测试A店\n380（小林）」，括号里写业绩归属的本店员工；可发送「我的进度」。没有写入任何账目。';
 export const STALE_CONSUMER = 'Front Claw：本实例已不再负责这条消息，没有写入。';
 export interface EmployeeTrace {
@@ -182,12 +191,15 @@ export const STORE_HOURS_BROKEN = 'Front Claw：本店营业时间配置异常�
  */
 export function createEmployeeLoop(options: WecomBotHandlerOptions) {
   const defaults = { cutoff: options.cutoff ?? DEFAULT_BUSINESS_CUTOFF, timeZone: options.timeZone ?? DEFAULT_TIME_ZONE };
-  const cores = new Map<string, (input: EmployeeMessage) => Promise<HandleResult>>();
-  return async (input: EmployeeMessage): Promise<HandleResult> => {
+  const cores = new Map<string, (input: EmployeeMessage, preflightReply?: PreflightReply) => Promise<EmployeeLoopResult>>();
+  return async (input: EmployeeMessage, preflightReply?: PreflightReply): Promise<EmployeeLoopResult> => {
+    const pendingArrival = input.pendingArrival ?? capturePendingArrival(options.store);
+    input = { ...input, pendingArrival };
+    const arrival = structuredClone(await pendingArrival);
     let hours: { cutoff: string; timeZone: string } | null = defaults;
     try {
       const person = await options.resolve(input.memberId);
-      if (person?.storeId) hours = resolveStoreHours(await options.store.getConfig(STORE_HOURS_KEY), person.storeId, defaults);
+      if (person?.storeId) hours = resolveStoreHours(arrival.hours, person.storeId, defaults);
     } catch { hours = defaults; /* 解析失败交核心按原规则拒绝/报不可用 */ }
     if (!hours) {
       try { options.onEmployeeTrace?.({ messageId: input.messageId ?? '', elapsedMs: 0, outcome: 'reply', ledgerSettled: false }); } catch { /* 观测 */ }
@@ -197,7 +209,7 @@ export function createEmployeeLoop(options: WecomBotHandlerOptions) {
     const key = `${hours.timeZone}|${hours.cutoff}`;
     let core = cores.get(key);
     if (!core) { core = createLoopCore(options, hours.cutoff, hours.timeZone); cores.set(key, core); }
-    return core(input);
+    return core(input, preflightReply);
   };
 }
 
@@ -205,26 +217,6 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
   const { store, resolve, now, onOutbound, onEmployeeTrace } = options;
   /** R3（A-P1-1）：本条消息的全部消费者写入都经这里（带 M07 epoch）。 */
   const writesFor = (input?: EmployeeMessage) => consumerWrites(store, input?.fence, () => now().getTime());
-  /** R14-02-close-expired：过期的本人待确认草稿自动作废，避免取消关不掉、新消息被卡住。 */
-  async function closeExpiredPending(list: readonly Draft[], input: EmployeeMessage): Promise<Draft[]> {
-    const at = now();
-    const closed: Draft[] = [];
-    for (const draft of list) {
-      if (draft.status !== 'pending' || Date.parse(draft.expiresAt) > at.getTime()) continue;
-      const ctx = meta(draft);
-      const next = {
-        ...draft,
-        status: 'void' as const,
-        closedAt: at.toISOString(),
-        payload: {
-          ...draft.payload,
-          ...(ctx ? { employeeContext: { ...ctx, finalReply: DRAFT_EXPIRED_REREPORT } } : {}),
-        },
-      } as Draft;
-      if (await writesFor(input).transitionPending(draft, next)) closed.push(next);
-    }
-    return closed;
-  }
   const tools = createAssistantTools({ store, now, cutoff, timeZone });
   const policyMode = options.accessPolicy === true;
   const platform = options.platformCapabilities;
@@ -398,7 +390,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       entryId: confirmEntryId(draft.draftId, index), storeId: draft.storeId, businessDay: draft.businessDay,
       customerName: item.customer, amount: item.amount, amountType: 'consultant', ownerPersonId: item.employeeId!,
       ownerName: item.employeeName, reporterPersonId: draft.reporterPersonId, note: item.note,
-      status: 'confirmed', disputed: false, createdAt: new Date(Date.parse(draft.createdAt) + index).toISOString(),
+      status: 'confirmed', disputed: false, createdAt: new Date(Date.parse(meta(draft)?.reportedAt ?? draft.createdAt) + index).toISOString(),
       sourceDraftId: draft.draftId, sourceOrdinal: index,
     }));
     // M03：策略模式下在提交事务内锁读策略行并按最新策略重判；被撤权则草稿退回待确认、零入账。
@@ -881,11 +873,11 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
   async function handleClassified(
     actor: Person, text: string, input: EmployeeMessage, tag: Tag,
     fingerprint: string, today: string, pending: Draft[], drafts: Draft[],
-  ): Promise<{ reply: string; operationId?: string; access?: Access } | undefined> {
+  ): Promise<{ reply: string; kind?: 'ask'; operationId?: string; access?: Access } | undefined> {
     const raw = input.modelClassification;
     if (!raw) return undefined;
     const chain = validateModelChain({ text, output: raw, context: isStandardAmountLine(text) ? 'standard-line' : 'free' });
-    if (!chain.ok) return { reply: chain.ask };
+    if (!chain.ok) return { reply: chain.ask, kind: 'ask' };
     const c = chain.classification;
     if (isReadOnlyQuery(c)) {
       const q = await dispatchClassifiedQuery(actor, c, input.memberId, tag);
@@ -903,7 +895,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       const built = await correctionDraft(actor, command, input, fingerprint, today);
       return await submitClassifiedDraft(built, actor, input, fingerprint, text, tag);
     }
-    if (chain.amountCents === undefined) return { reply: clarifyQuestion('missing_amount') };
+    if (chain.amountCents === undefined) return { reply: clarifyQuestion('missing_amount'), kind: 'ask' };
     const command = { action: 'amend' as const, amount: chain.amountCents, index: c.slots.index ?? null, personName: null, customerName: c.slots.customer ?? null };
     const built = await correctionDraft(actor, command, input, fingerprint, today);
     return await submitClassifiedDraft(built, actor, input, fingerprint, text, tag);
@@ -923,14 +915,54 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
     tag.access = needs(saved);
     return { reply: withLeftover(resultText(saved), text, 'correction'), operationId: saved.draftId, access: needs(saved) };
   }
-  return async (original: EmployeeMessage): Promise<HandleResult> => {
+  return async (original: EmployeeMessage, preflightReply?: PreflightReply): Promise<EmployeeLoopResult> => {
     const input = { ...original };
     const started = performance.now();
     let operationId: string | undefined;
     let outcome: EmployeeTrace['outcome'] = 'reply';
     let ledgerSettled = false;
+    let newMessagePrepared = false;
     const tag: Tag = {};
     const active = () => !input.signal?.aborted && performance.now() < (input.deadline ?? Infinity);
+    let abandonedPendingReminder = '';
+    let expiredPendingReminder = '';
+    let pendingSnapshot: { drafts: Draft[]; ask: SavedNewCustomerAsk | null } | undefined;
+    const response: { kind: 'ask' | 'reply'; occupiesPending: boolean } = { kind: 'reply', occupiesPending: false };
+    const askReply = (reply: string) => { response.kind = 'ask'; return reply; };
+    let askRaw: string | null | undefined;
+    let askRead = false;
+    const readAsk = async (key: string) => {
+      if (!askRead) { askRaw = await store.getConfig(key); askRead = true; }
+      return askRaw;
+    };
+    const advance = async (actor: Person, drafts: Draft[], admission?: PendingReportAdmission, expireOnly = false) => {
+      const askKey = newCustomerAskKey(actor.personId, input.sessionId ?? '');
+      const slot = await advancePendingSlot({ drafts, askKey, text: input.text.trim(), ...(admission ? { admission } : {}),
+        readAsk: () => readAsk(askKey), writes: writesFor(input), now, active, expiredReply: DRAFT_EXPIRED_REREPORT, arrivedAt: input.arrivedAt, arrivedSequence: (await input.pendingArrival!).sequence, expireOnly });
+      if (slot.reminder) abandonedPendingReminder = slot.reminder;
+      if (slot.expiredReminder) expiredPendingReminder += (expiredPendingReminder ? '\n' : '') + slot.expiredReminder;
+      if (!slot.pendingAsk) askRaw = '';
+      return slot;
+    };
+    const saveReport = async (actor: Person, draft?: Draft, ask?: { key: string; value: string }, expectedAsk?: SavedNewCustomerAsk) => {
+      const at = now().toISOString();
+      if (expectedAsk && !askRaw) return false;
+      if (draft) {
+        if (meta(draft)) {
+          meta(draft)!.reportedAt = draft.createdAt;
+          if (input.arrivedAt) meta(draft)!.platformIssuedAt = input.arrivedAt;
+        }
+        draft.createdAt = at;
+        if (expiredPendingReminder && meta(draft)) meta(draft)!.replacedPending = true;
+      }
+      const expected = expectedAsk && askRaw ? { key: newCustomerAskKey(actor.personId, input.sessionId!), value: askRaw,
+        arrivedSequence: confirmationSequence(expectedAsk.platformIssuedAt ?? expectedAsk.issuedAt ?? '', input.arrivedAt, !!expectedAsk.replacedPending, (await input.pendingArrival!).sequence) } : undefined;
+      const result = await writesFor(input).savePendingReport({ reporterPersonId: actor.personId, at, ...(draft ? { draft } : {}), ...(ask ? { ask } : {}), ...(expected ? { expectedAsk: expected } : {}) });
+      const notices = result.drafts.flatMap(d => reportLabels(d).map(n => `上一笔「${n}」没有确认，已作废，需要的话请重新报。`));
+      for (const raw of result.asks) for (const name of (JSON.parse(raw) as SavedNewCustomerAsk).names) notices.push(`上一条「${name}」没有记，需要的话请重新报。`);
+      if (notices.length) abandonedPendingReminder = notices.join('\n');
+      return result.saved;
+    };
     const run = async (): Promise<string> => {
       if (!valid(input.messageId) || !valid(input.sessionId) || !Number.isSafeInteger(input.bindingVersion) || input.bindingVersion! < 1) return DENIED;
       const actor = await actorFor(input.memberId);
@@ -938,8 +970,27 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       const text = input.text.trim();
       // M03 入口鉴权：策略缺失、损坏、无授权、停用或角色不符时，在任何业务读写前拒绝。
       if (policyMode && !standing(await readPolicy(store), actor).allowed) return ACCESS_DENIED;
+      // D179 统一过期收尾：先生成本请求私有快照并关闭过期项，所有正常分支共用；
+      // 回复只在循环出口追加。expireOnly 不消费有效追问，正常确认仍复用这一次 config 读取。
+      let drafts = structuredClone(await store.listDrafts({ reporterPersonId: actor.personId, storeId: actor.storeId }))
+        .filter(d => owned(d, actor, input));
+      const expiredSlot = await advance(actor, drafts, undefined, true);
+      if (expiredSlot.blocked) return 'Front Claw：请求已取消或草稿版本已变化，请查原操作结果。';
+      drafts = expiredSlot.drafts;
+      pendingSnapshot = structuredClone({ drafts, ask: expiredSlot.pendingAsk });
+      // D185：过期追问的肯定答复只返回已消费的 D176；不落入通用提示或 D143。
+      if (expiredSlot.expiredAsk && (isYesNewCustomerReply(text) || /^(?:好的?)[。.!！]?$/.test(text.normalize('NFKC')))) {
+        const reply = expiredPendingReminder; expiredPendingReminder = ''; return reply;
+      }
+      // D181-4：过期草稿收到「对」只回 D143。
+      if (text === '对' && expiredSlot.expiredReminder) { expiredPendingReminder = ''; return DRAFT_EXPIRED_REREPORT; }
+      if (preflightReply !== undefined) {
+        if (!active()) return 'Front Claw：请求已取消或超时，未开始新写入。';
+        newMessagePrepared = true;
+        return typeof preflightReply === 'string' ? preflightReply : preflightReply.kind === 'ask' ? askReply(preflightReply.text) : preflightReply.text;
+      }
       const same = (current: Person | null) => !!current && current.personId === actor.personId && current.accountId === actor.accountId && current.storeId === actor.storeId;
-      // 查询不触发认领、恢复、提醒或写入，开关关闭仍可查本人历史。
+      // D175：查询和入口预检不迁移有效挂起位；D179 过期收尾已完成。开关关闭仍可查本人历史。
       if (['我的进度', '今天进度', '进度'].includes(text) || isSelfProgressQuery(text)) {
         if (!await can(actor, 'progress_self')) return ACCESS_DENIED;
         const result = await tools.myProgress(actor.accountId);
@@ -956,7 +1007,6 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       }
       const appointmentAnswer = await appointmentQuery(actor, text, input.memberId, tag);
       if (appointmentAnswer !== undefined) return appointmentAnswer;
-      let drafts = (await store.listDrafts({ reporterPersonId: actor.personId, storeId: actor.storeId })).filter(d => owned(d, actor, input));
       const query = /^入账结果(?:\s+(\S+))?$/.exec(text);
       if (query) {
         const ref = query[1];
@@ -996,11 +1046,11 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       }
       if (!await enabled(actor)) return DISABLED;
       if (!active()) return 'Front Claw：请求已取消或超时，未开始新写入。';
-      // R14-02-close-expired：先关闭过期草稿，再看待确认；「新增一笔」只认尚未过期的二选一。
-      const expiredClosed = await closeExpiredPending(drafts.filter(d => d.status === 'pending'), input);
-      if (expiredClosed.length) {
-        drafts = (await store.listDrafts({ reporterPersonId: actor.personId, storeId: actor.storeId })).filter(d => owned(d, actor, input));
-      }
+      const slot = await advance(actor, drafts);
+      if (slot.blocked) return 'Front Claw：请求已取消或草稿版本已变化，请查原操作结果。';
+      drafts = slot.drafts;
+      if (slot.staleAsk) return slot.staleAsk.replacedPending ? newerPendingReply(slot.staleAsk.listed.map(i => `${i.customer ?? '未留名'} ${formatYuan(i.amount)}元`)) : newCustomerAskReply(slot.staleAsk.names);
+      const expiredClosed = [...expiredSlot.expired, ...slot.expired];
       const pending = drafts.filter(d => d.status === 'pending');
       if (expiredClosed.length && pending.length === 0 && (text === '对' || text === '全部确认' || text === '取消')) {
         if (text === '取消') return resultText(expiredClosed[expiredClosed.length - 1]!);
@@ -1104,73 +1154,81 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         operationId = saved.draftId; tag.access = needs(saved);
         return resultText(saved);
       }
-      // D139：待答「是新客户「X」吗？」——只认「是」才出草稿；其它回复（含「对」）不出草稿、不写入。
-      const newAskKey = newCustomerAskKey(actor.personId, input.sessionId);
-      const newAskRaw = (await store.getConfig(newAskKey))?.trim();
-      if (newAskRaw) {
-        await writesFor(input).putOperationRecord(newAskKey, '');
-        type SavedAsk = { names: string[]; listed: ReportDraftItem[]; businessDay: string; text?: string; gateEntries?: GateEntry[]; source?: 'standard' | 'natural' };
-        let savedAsk: SavedAsk | null = null;
-        try { savedAsk = JSON.parse(newAskRaw) as SavedAsk; } catch { savedAsk = null; }
-        if (!savedAsk?.listed?.length || !isYesNewCustomerReply(text)) {
-          return 'Front Claw：没有写入。';
-        }
-        if (pending.length || drafts.some(d => d.status === 'confirming')) {
-          return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
-        }
-        // R18 / D152：回「是」后再过一次单闸（原句与条目随追问一起存下）；不过就先问，不出草稿。
-        const gateYes = evaluateConfirmableReportDraft({ text: savedAsk.text ?? '', today: savedAsk.businessDay, employeeNames: new Set([...(await store.listPeople()).filter(p => p.active && p.storeId === actor.storeId).map(p => p.displayName), ...(await store.listAliases(actor.storeId)).map(a => a.alias)]),
-          liveModelAllowsDraft: false, entries: savedAsk.gateEntries ?? savedAsk.listed.map(i => ({ customer: i.customer ?? null, employeeName: i.employeeId === actor.personId ? '' : i.employeeName, compound: null })), source: savedAsk.source ?? 'standard', confirmedNewNames: savedAsk.names, knownCustomerNames: await collectKnownCustomerNames(store, actor.storeId) });
-        if (!gateYes.ok) return 'Front Claw：没有写入。';
-        // D139-roster: 回「是」只出草稿，不把名字写入任何名单状态；已知客户只在「对」确认入账后从本店已确认账本推导。
-        // D131：回「是」当天若已有同名确认单，仍走二选一，不直接出新草稿。
-        const todayConfirmedYes = (await store.listEntries({ storeId: actor.storeId, businessDay: savedAsk.businessDay, status: 'confirmed' }))
-          .filter(row => row.status === 'confirmed' && row.storeId === actor.storeId && row.businessDay === savedAsk.businessDay);
-        const reportCustomersYes = new Set(savedAsk.listed.map(i => i.customer).filter((c): c is string => !!c));
-        const existingYes = todayConfirmedYes.map(row => row.customerName).filter((n): n is string => !!n);
-        const conflictNamesYes = new Set([
-          ...[...reportCustomersYes].filter(name => existingYes.includes(name)),
-          ...customerNameConflicts(text, existingYes, [...reportCustomersYes]),
-        ]);
-        // 回「是」的正文不是原报单行，customerNameConflicts 对正文可能无命中；整词相等已覆盖。
-        const conflictsYes = todayConfirmedYes.filter(row => row.customerName && conflictNamesYes.has(row.customerName));
-        if (conflictsYes.length) {
-          const names = [...new Set(conflictsYes.map(r => r.customerName))].join('、');
-          const listedPicks = conflictsYes
-            .slice()
-            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
-            .map((row, i) => toPickItem(row, i + 1, actor));
-          const matching = savedAsk.listed.find(i => conflictsYes.some(c => c.customerName === i.customer));
-          const newAmount = matching?.amount ?? savedAsk.listed[0]!.amount;
-          const reason = `本店今天已经有「${names}」的单（任意报单人都算），这次不能直接当成新的一笔入账。`;
-          const proxyChoice = savedAsk.listed.some(item => item.employeeId !== actor.personId);
+      // D172 / D174：读取、过期与消费均由统一挂起位负责；肯定答复仍须重过 D152。
+      const savedAsk = slot.ask;
+      if (savedAsk) {
+        if (/^(?:不是|取消)[。.!！]?$/.test(text.normalize('NFKC'))) return 'Front Claw：好的，这条没有记。';
+        if (isYesNewCustomerReply(text)) {
+          if (pending.length || drafts.some(d => d.status === 'confirming')) {
+            return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
+          }
+          // R18 / D152：回「是」后再过一次单闸（原句与条目随追问一起存下）；不过就先问，不出草稿。
+          const gateYes = evaluateConfirmableReportDraft({ text: savedAsk.text ?? '', today: savedAsk.businessDay, employeeNames: new Set([...(await store.listPeople()).filter(p => p.active && p.storeId === actor.storeId).map(p => p.displayName), ...(await store.listAliases(actor.storeId)).map(a => a.alias)]),
+            liveModelAllowsDraft: false, entries: savedAsk.gateEntries ?? savedAsk.listed.map(i => ({ customer: i.customer ?? null, employeeName: i.employeeId === actor.personId ? '' : i.employeeName, compound: null })), source: savedAsk.source ?? 'standard', confirmedNewNames: savedAsk.names, knownCustomerNames: await collectKnownCustomerNames(store, actor.storeId) });
+          if (!gateYes.ok) return askReply(gateYes.reason.startsWith('customer:') ? notCustomerNameAskReply([]) : formatMaybeReportAsk(savedAsk.text ?? '', await collectConfirmedLedgerNames(store, actor.storeId)));
+          // D139-roster: 回「是」只出草稿，不把名字写入任何名单状态；已知客户只在「对」确认入账后从本店已确认账本推导。
+          // D131：回「是」当天若已有同名确认单，仍走二选一，不直接出新草稿。
+          const todayConfirmedYes = (await store.listEntries({ storeId: actor.storeId, businessDay: savedAsk.businessDay, status: 'confirmed' }))
+            .filter(row => row.status === 'confirmed' && row.storeId === actor.storeId && row.businessDay === savedAsk.businessDay);
+          const reportCustomersYes = new Set(savedAsk.listed.map(i => i.customer).filter((c): c is string => !!c));
+          const existingYes = todayConfirmedYes.map(row => row.customerName).filter((n): n is string => !!n);
+          const conflictNamesYes = new Set([
+            ...[...reportCustomersYes].filter(name => existingYes.includes(name)),
+            ...customerNameConflicts(text, existingYes, [...reportCustomersYes]),
+          ]);
+          // 回「是」的正文不是原报单行，customerNameConflicts 对正文可能无命中；整词相等已覆盖。
+          const conflictsYes = todayConfirmedYes.filter(row => row.customerName && conflictNamesYes.has(row.customerName));
+          if (conflictsYes.length) {
+            const names = [...new Set(conflictsYes.map(r => r.customerName))].join('、');
+            const listedPicks = conflictsYes
+              .slice()
+              .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
+              .map((row, i) => toPickItem(row, i + 1, actor));
+            const matching = savedAsk.listed.find(i => conflictsYes.some(c => c.customerName === i.customer));
+            const newAmount = matching?.amount ?? savedAsk.listed[0]!.amount;
+            const reason = `本店今天已经有「${names}」的单（任意报单人都算），这次不能直接当成新的一笔入账。`;
+            const proxyChoice = savedAsk.listed.some(item => item.employeeId !== actor.personId);
+            operationId = hash(['employee-loop:m01', input.sessionId, input.messageId]);
+            const choiceDraft = buildConfirmableReportDraft(gateYes.pass, { actor, input, fingerprint, operationId, businessDay: savedAsk.businessDay,
+              added: [...savedAsk.listed], duplicates: [], awaitingDuplicateChoice: { listed: listedPicks, reason, newAmount } });
+            const latestChoice = await actorFor(input.memberId);
+            if (!latestChoice || !owned(choiceDraft, latestChoice, input) || !await targetsInStore(choiceDraft, latestChoice) || !await enabled(latestChoice) || !active()) return DENIED;
+            if (latestChoice.tier === 'owner') return OWNER_CANNOT_REPORT;
+            if (!await can(latestChoice, proxyChoice ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
+            // D143/D172：异步重读和鉴权耗时也在原确认窗口内，不顺延旧追问。
+            if (pendingExpired(savedAsk.expiresAt, now())) {
+              await advance(actor, drafts, undefined, true);
+              const reply = expiredPendingReminder || DRAFT_EXPIRED_REREPORT; expiredPendingReminder = ''; return reply;
+            }
+            response.occupiesPending = true;
+            if (savedAsk.replacedPending) meta(choiceDraft)!.replacedPending = true;
+            if (!await saveReport(actor, choiceDraft, undefined, savedAsk)) return 'Front Claw：草稿版本已变化，请查原操作结果。';
+            const savedChoice = await store.getDraft(operationId);
+            if (!savedChoice || !owned(savedChoice, latestChoice, input) || meta(savedChoice)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
+            tag.access = needs(savedChoice);
+            return `${actor.storeName}\n${resultText(savedChoice)}`;
+          }
+          const { fresh: addedYes, duplicates: dupYes } = await splitDuplicates(actor.storeId, savedAsk.businessDay, savedAsk.listed);
+          if (!addedYes.length) return `Front Claw：这份清单的 ${dupYes.length} 笔今天都已入账，没有新增，没有写入。如确是新的一笔，请在客户名或备注里写明区别后重发。`;
+          const proxyYes = addedYes.some(item => item.employeeId !== actor.personId);
           operationId = hash(['employee-loop:m01', input.sessionId, input.messageId]);
-          const choiceDraft = buildConfirmableReportDraft(gateYes.pass, { actor, input, fingerprint, operationId, businessDay: savedAsk.businessDay,
-            added: [...savedAsk.listed], duplicates: [], awaitingDuplicateChoice: { listed: listedPicks, reason, newAmount } });
-          const latestChoice = await actorFor(input.memberId);
-          if (!latestChoice || !owned(choiceDraft, latestChoice, input) || !await targetsInStore(choiceDraft, latestChoice) || !await enabled(latestChoice) || !active()) return DENIED;
-          if (latestChoice.tier === 'owner') return OWNER_CANNOT_REPORT;
-          if (!await can(latestChoice, proxyChoice ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
-          await writesFor(input).createDraft(choiceDraft);
-          const savedChoice = await store.getDraft(operationId);
-          if (!savedChoice || !owned(savedChoice, latestChoice, input) || meta(savedChoice)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
-          tag.access = needs(savedChoice);
-          return `${actor.storeName}\n${resultText(savedChoice)}`;
+          const draftYes = buildConfirmableReportDraft(gateYes.pass, { actor, input, fingerprint, operationId, businessDay: savedAsk.businessDay, added: addedYes, duplicates: dupYes });
+          const latestYes = await actorFor(input.memberId);
+          if (!latestYes || !owned(draftYes, latestYes, input) || !await targetsInStore(draftYes, latestYes) || !await enabled(latestYes) || !active()) return DENIED;
+          if (latestYes.tier === 'owner') return OWNER_CANNOT_REPORT;
+          if (!await can(latestYes, proxyYes ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
+          if (pendingExpired(savedAsk.expiresAt, now())) {
+            await advance(actor, drafts, undefined, true);
+            const reply = expiredPendingReminder || DRAFT_EXPIRED_REREPORT; expiredPendingReminder = ''; return reply;
+          }
+          response.occupiesPending = true;
+          if (savedAsk.replacedPending) meta(draftYes)!.replacedPending = true;
+          if (!await saveReport(actor, draftYes, undefined, savedAsk)) return 'Front Claw：草稿版本已变化，请查原操作结果。';
+          const savedYes = await store.getDraft(operationId);
+          if (!savedYes || !owned(savedYes, latestYes, input) || meta(savedYes)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
+          tag.access = needs(savedYes);
+          return `${actor.storeName}\n${resultText(savedYes)}`;
         }
-        const { fresh: addedYes, duplicates: dupYes } = await splitDuplicates(actor.storeId, savedAsk.businessDay, savedAsk.listed);
-        if (!addedYes.length) return `Front Claw：这份清单的 ${dupYes.length} 笔今天都已入账，没有新增，没有写入。如确是新的一笔，请在客户名或备注里写明区别后重发。`;
-        const proxyYes = addedYes.some(item => item.employeeId !== actor.personId);
-        operationId = hash(['employee-loop:m01', input.sessionId, input.messageId]);
-        const draftYes = buildConfirmableReportDraft(gateYes.pass, { actor, input, fingerprint, operationId, businessDay: savedAsk.businessDay, added: addedYes, duplicates: dupYes });
-        const latestYes = await actorFor(input.memberId);
-        if (!latestYes || !owned(draftYes, latestYes, input) || !await targetsInStore(draftYes, latestYes) || !await enabled(latestYes) || !active()) return DENIED;
-        if (latestYes.tier === 'owner') return OWNER_CANNOT_REPORT;
-        if (!await can(latestYes, proxyYes ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
-        await writesFor(input).createDraft(draftYes);
-        const savedYes = await store.getDraft(operationId);
-        if (!savedYes || !owned(savedYes, latestYes, input) || meta(savedYes)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
-        tag.access = needs(savedYes);
-        return `${actor.storeName}\n${resultText(savedYes)}`;
       }
       if (text === '对' || text === '全部确认' || text === '取消') {
         // R4：上一消费者失权后补偿不能改当前持有者的草稿，可能留下 confirming。
@@ -1208,9 +1266,12 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         }
         if (pending.length !== 1) return NO_DRAFT;
         const draft = pending[0]!; operationId = draft.draftId;
-        if (Date.parse(draft.expiresAt) <= now().getTime()) {
-          // R14-02-close-expired（兜底）：若前面未关上，这里关后再回复。
-          const leftoverExpired = await closeExpiredPending([draft], input);
+        // D183：所有报单使用同一严格序号条件；普通草稿被拦时重显已有草稿，不声称旧项作废。
+        const guardArrival = text !== '取消' && draft.kind === 'report';
+        const arrivedSequence = confirmationSequence(meta(draft)?.platformIssuedAt ?? draft.createdAt, input.arrivedAt, meta(draft)?.replacedPending === true, (await input.pendingArrival!).sequence);
+        if (pendingExpired(draft.expiresAt, now())) {
+          const lateSlot = await advance(actor, [draft]);
+          const leftoverExpired = lateSlot.expired;
           if (text === '取消' && leftoverExpired.length) return resultText(leftoverExpired[leftoverExpired.length - 1]!);
           return DRAFT_EXPIRED_REREPORT;
         }
@@ -1253,15 +1314,27 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
           if (!item.date || !item.time || zonedDateTime(item.date, item.time, timeZone).getTime() <= now().getTime()) return `Front Claw：预约时间已经过了，没有登记。请回复「取消」后重发。`;
         }
         // M04：报数确认前再查一次重发——清单里的行在回显后已被别人入账，则作废本草稿、零入账。
-        if (next.status !== 'void' && draft.payload.type === 'report' && !draft.payload.explicitNew && (await splitDuplicates(draft.storeId, draft.businessDay, draft.payload.added)).duplicates.length) {
+        const duplicateCheck = next.status !== 'void' && draft.payload.type === 'report' && !draft.payload.explicitNew
+          ? await splitDuplicates(draft.storeId, draft.businessDay, draft.payload.added) : null;
+        // 异步鉴权/查重也消耗原确认窗口；正常路径只多做本地判断，不增加数据库读写。
+        if (!active()) return 'Front Claw：请求已取消或超时，未开始新写入。';
+        if (pendingExpired(draft.expiresAt, now())) {
+          const lateSlot = await advance(actor, [draft]);
+          if (lateSlot.blocked) return 'Front Claw：草稿版本已变化，请查原操作结果。';
+          if (text === '取消' && lateSlot.expired.length) return resultText(lateSlot.expired[0]!);
+          return DRAFT_EXPIRED_REREPORT;
+        }
+        if (duplicateCheck?.duplicates.length) {
           const voided = { ...next, status: 'void', closedAt: now().toISOString(), payload: { ...next.payload, outcome: 'conflict' } } as Draft;
           return await writesFor(input).transitionPending(draft, voided) ? CONFLICT : 'Front Claw：草稿版本已变化，请查原操作结果。';
         }
-        if (!await writesFor(input).transitionPending(draft, next)) {
+        if (!await writesFor(input).transitionPending(draft, next, next.status !== 'void' ? { ...(guardArrival ? { arrivedSequence } : {}), unexpiredAt: now().toISOString() } : undefined)) {
           // R18 / D160：并发回「对」的输家——对方已把这张草稿推进到确认中/已确认，只回「已经入账了」，不多记一笔、不出「已入账」。
           if (next.status !== 'void' && draft.kind === 'report') {
             const now2 = await store.getDraft(draft.draftId);
             if (now2 && (now2.status === 'confirmed' || now2.status === 'confirming')) return ALREADY_CONFIRMED_TEXT;
+            const currentArrival = now2 ? confirmationSequence(meta(now2)?.platformIssuedAt ?? now2.createdAt, input.arrivedAt, meta(now2)?.replacedPending === true, (await input.pendingArrival!).sequence) : arrivedSequence;
+            if (now2?.status === 'pending' && !sequenceBefore(meta(now2)?.pendingSequence, currentArrival)) return meta(now2)?.replacedPending ? newerPendingReply(reportLabels(now2)) : resultText(now2);
           }
           return 'Front Claw：草稿版本已变化，请查原操作结果。';
         }
@@ -1273,12 +1346,14 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       const today = businessDate(now(), cutoff, timeZone);
       // R8：标准行先走同一份语法（D125）。否定/小额小数追问（D122/D123），非今天拒（D124）。
       const std = tryStandardReport(text, today);
-      const modelAsk = async () => formatMaybeReportAsk(text, await collectConfirmedLedgerNames(store, actor.storeId));
+      const modelAsk = async () => askReply(formatMaybeReportAsk(text, await collectConfirmedLedgerNames(store, actor.storeId)));
       // R18 / 移交项 3：D146 未见否定补报、D147 客户位残片的「先问」结论来自单闸模块（textLevelImpurity，与闸内同一函数），
       // 这里只负责在 D81 之前给出原措辞，不自己判断。
       {
         const impurity = textLevelImpurity(text, today);
-        if (impurity) return askForTextImpurity(impurity, text, await collectConfirmedLedgerNames(store, actor.storeId));
+        if (impurity) {
+          return askReply(askForTextImpurity(impurity, text, await collectConfirmedLedgerNames(store, actor.storeId)));
+        }
       }
       // R16 / D145 撤销：不是纯标准行（标准行＋进度/查询/认不出的残片）整句交模型，报单也不单独出草稿。
       // 改账、预约、宣传等既有「草稿＋后半句没办」口径仍保留在规则层（D145 撤销说明由模型路径在实测达成，这些组合本轮不改）。
@@ -1287,22 +1362,22 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       const recognized = std.status === 'complete' || std.status === 'ask';
       // D134：非今天只看报单这一半；后半句「登记明天…」不让整句被 D124 拒掉。
       const nonToday = (std.status === 'complete' && std.report.businessDay !== today) || hasUnnegatedNonToday(compoundHead(text), today);
-      if (recognized && nonToday) return withLeftover(NOT_TODAY_REPLY, text, 'report');
-      if (std.status === 'ask') return clarifyQuestion(standardAskToReason(std.reason), std.detail);
+      if (recognized && nonToday) return askReply(withLeftover(NOT_TODAY_REPLY, text, 'report'));
+      if (std.status === 'ask') return askReply(clarifyQuestion(standardAskToReason(std.reason), std.detail));
       // R4：模糊金额 / 未成交 优先于清单解析和「还没定」类笼统澄清，必须先问清或拒绝，不出可确认草稿。
       // 同一份语法已经收下的标准行，不再让自然抽取把归属/行尾结构误当成约数。
       const amountGuard = std.status === 'complete' ? { status: 'none' as const } : extractReport(text);
       if (amountGuard.status === 'unclear' && (amountGuard.reason === 'vague_amount' || amountGuard.reason === 'not_closed' || amountGuard.reason === 'ask_wan' || amountGuard.reason === 'negation')) {
-        return clarifyQuestion(amountGuard.reason, amountGuard.detail);
+        return askReply(clarifyQuestion(amountGuard.reason, amountGuard.detail));
       }
       // R7：整句金额收口（所有路径同一函数）。句中有不安全金额（出头/亏/无单位歧义小数）→ 追问，不出草稿。无金额跨度（issue=bad）放过，以免拦截查询。
       const utteranceGuard = guardUtteranceAmounts(text, isStandardAmountLine(text) ? 'standard-line' : 'free');
       if (!utteranceGuard.ok && utteranceGuard.issue !== 'bad') {
-        return clarifyQuestion(guardIssueToReason(utteranceGuard.issue), utteranceGuard.text);
+        return askReply(clarifyQuestion(guardIssueToReason(utteranceGuard.issue), utteranceGuard.text));
       }
       // R2：互斥候选/未定指代/自述不确定 → 先问清楚（任何店务动作都不猜）。
       const vague = ambiguityOf(text);
-      if (vague) return clarifyQuestion(vague);
+      if (vague) return askReply(clarifyQuestion(vague));
       // R2：自然句报数（客人/项目 + 金额 + 可选括号员工）；有金额的报数优先于预约。
       // R2：宽松行解析会把同一行里的第二笔（「张姐680（小王）；李姐980（小美）」）吞进备注 → 这种情况改用自然句抽取，抽不清就澄清，绝不静默丢笔。
       const looseFirst = parseReportText(text, today).status === 'none' ? parseLooseReport(text, today) : { status: 'none' as const };
@@ -1341,6 +1416,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
           const latest = await actorFor(input.memberId);
           if (!latest || !owned(forced, latest, input) || !await enabled(latest) || !active()) return DENIED;
           if (!await draftAllowed(latest, forced)) return ACCESS_DENIED;
+          response.occupiesPending = true;
           await writesFor(input).createDraft(forced);
           const saved = await store.getDraft(forced.draftId);
           if (!saved || !owned(saved, latest, input)) return 'Front Claw：同一消息内容冲突，未写入。';
@@ -1367,7 +1443,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
             if (!policyMode) return 'Front Claw：预约登记当前未开放，没有写入。';
             if (!await can(actor, 'appointment_submit', actor.storeId)) return ACCESS_DENIED;
             await writesFor(input).putOperationRecord(appointmentAskKey(actor, input), JSON.stringify(parsedApptAsk.item));
-            return clarifyQuestion('missing_customer');
+            return askReply(clarifyQuestion('missing_customer'));
           }
         }
         if (parseAppointmentRequest(src, now(), timeZone) && (pending.length || drafts.some(d => d.status === 'confirming'))) return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
@@ -1378,6 +1454,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
           const latest = await actorFor(input.memberId);
           if (!latest || !owned(built, latest, input) || !await enabled(latest) || !active()) return DENIED;
           if (!await draftAllowed(latest, built)) return ACCESS_DENIED;
+          response.occupiesPending = true;
           await writesFor(input).createDraft(built);
           const saved = await store.getDraft(built.draftId);
           if (!saved || !owned(saved, latest, input) || meta(saved)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
@@ -1399,6 +1476,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         const latest = await actorFor(input.memberId);
         if (!latest || !owned(built, latest, input) || !await enabled(latest) || !active()) return DENIED;
         if (!await draftAllowed(latest, built)) return ACCESS_DENIED;
+        response.occupiesPending = true;
         await writesFor(input).createDraft(built);
         const saved = await store.getDraft(built.draftId);
         if (!saved || !owned(saved, latest, input) || meta(saved)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
@@ -1412,28 +1490,28 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       // R2（D5 已定：跨店不行）：报数句里点名了他店（目录里的门店名）→ 拒绝，零写入。
       // 无论能否解析成报数：点名他店的店务请求一律拒绝（不读、不写）。
       if (otherStoreMentioned(text, people, actor)) return withLeftover(DENIED, text, 'report');
-      if (natural.status === 'unclear') return clarifyQuestion(natural.reason, natural.detail);
-      if (looseSwallowed && natural.status !== 'complete') return clarifyQuestion('orphan_amount');
+      if (natural.status === 'unclear') return askReply(clarifyQuestion(natural.reason, natural.detail));
+      if (looseSwallowed && natural.status !== 'complete') return askReply(clarifyQuestion('orphan_amount'));
       const parsed = std.status === 'complete' ? { status: 'complete' as const, report: std.report }
         : loose.status === 'complete' && !looseSwallowed ? loose
         : natural.status === 'complete' ? { status: 'complete' as const, report: { businessDay: today, storeName: null, entries: natural.entries as (ParsedEntry & { self?: boolean; storeName?: string | null })[] } } : loose;
       if (parsed.status !== 'complete') {
         // R2：金额带角分/负数/零/超上限 → 明确澄清，不取整。
         const issue = moneyIssueOf(text);
-        if (issue) return clarifyQuestion(issue.issue, issue.text);
+        if (issue) return askReply(clarifyQuestion(issue.issue, issue.text));
         const fromModel = await handleClassified(actor, text, input, tag, fingerprint, today, pending, drafts);
         if (fromModel !== undefined) {
           if (fromModel.operationId) operationId = fromModel.operationId;
           if (fromModel.access) tag.access = fromModel.access;
-          return fromModel.reply;
+          return fromModel.kind === 'ask' ? askReply(fromModel.reply) : fromModel.reply;
         }
-        return REPORT_HINT;
+        return askReply(REPORT_HINT);
       }
       const report = parsed.report;
       // R18 / D155：记下条目来源；自然句抽取不是纯标准行。
       const parsedSource: 'standard' | 'natural' = std.status === 'complete' || (loose.status === 'complete' && !looseSwallowed) ? 'standard' : 'natural';
       // R3（D81 已定口径）：非今天的单 → 固定一句，不追问；是否开放补报待 hanyu 拍板。
-      if (report.businessDay !== today) return withLeftover(NOT_TODAY_REPLY, text, 'report');
+      if (report.businessDay !== today) return askReply(withLeftover(NOT_TODAY_REPLY, text, 'report'));
       if (report.storeName && report.storeName !== actor.storeName) return withLeftover(DENIED, text, 'report');
       const aliases = await store.listAliases(actor.storeId);
       // M02 同店代报：括号里的员工必须能在本店唯一匹配到在职完整人员，业绩记给该员工；匹配不到（含他店员工）即拒绝，零写入。
@@ -1466,7 +1544,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         return await modelAsk();
       }
       if (targets.some(target => !complete(target) || target!.storeId !== actor.storeId || target!.storeName !== actor.storeName)) return withLeftover(DENIED, text, 'report');
-      if (pending.length || drafts.some(d => d.status === 'confirming')) return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
+      if (pending.some(d => d.kind !== 'report') || drafts.some(d => d.status === 'confirming')) return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
       operationId = hash(['employee-loop:m01', input.sessionId, input.messageId]);
       const listed = report.entries.map((item, index) => {
         const { ownership: _own, ownershipText: _ot, compound: _c, attributedName: _an, ...base } = item;
@@ -1478,7 +1556,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       try {
         sealDraftAmounts({ utterance: text, items: listed.map(i => ({ amount: i.amount, ...(i.amountText ? { amountText: i.amountText } : {}) })), context: isStandardAmountLine(text) ? 'standard-line' : 'free' });
       } catch (err) {
-        if (err instanceof UnvalidatedAmountError) return clarifyQuestion(guardIssueToReason(err.issue), err.text);
+        if (err instanceof UnvalidatedAmountError) return askReply(clarifyQuestion(guardIssueToReason(err.issue), err.text));
         throw err;
       }
       // D133：归属说法与括号员工核对。一致或互补继续；冲突追问、零写入。
@@ -1506,9 +1584,9 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         if (fromModel !== undefined) {
           if (fromModel.operationId) operationId = fromModel.operationId;
           if (fromModel.access) tag.access = fromModel.access;
-          return fromModel.reply;
+          return fromModel.kind === 'ask' ? askReply(fromModel.reply) : fromModel.reply;
         }
-        return withLeftover(`Front Claw：行尾备注「${modelNotes[0]}」需要确认后再记。没有写入任何账目。`, text, 'report');
+        return askReply(withLeftover(`Front Claw：行尾备注「${modelNotes[0]}」需要确认后再记。没有写入任何账目。`, text, 'report'));
       }
       // R18 / D152 单闸（唯一出口）：在 D131 二选一、D139 新客户追问、建草稿之前算一次。二选一草稿（选「新增」后变成可确认草稿）、
       // 「是新客户」回「是」后出的草稿、以及直接出的草稿，都必须拿着这张通行证组装；闸不过一律先问。
@@ -1551,7 +1629,9 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         if (!latestChoice || !owned(choiceDraft, latestChoice, input) || !await targetsInStore(choiceDraft, latestChoice) || !await enabled(latestChoice) || !active()) return DENIED;
         if (latestChoice.tier === 'owner') return OWNER_CANNOT_REPORT;
         if (!await can(latestChoice, proxyChoice ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
-        await writesFor(input).createDraft(choiceDraft);
+
+        response.occupiesPending = true;
+        if (!await saveReport(actor, choiceDraft)) return 'Front Claw：草稿版本已变化，请查原操作结果。';
         const savedChoice = await store.getDraft(operationId);
         if (!savedChoice || !owned(savedChoice, latestChoice, input) || meta(savedChoice)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
         tag.access = needs(savedChoice);
@@ -1559,12 +1639,18 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       }
       // D139/D153/D165：客户三档只读单闸结论；入口/循环不另判。
       if (!gate.ok && !gate.newCustomerNames) {
-        return gate.reason.startsWith('customer:') ? notCustomerNameAskReply([]) : await modelAsk();
+        return gate.reason.startsWith('customer:') ? askReply(notCustomerNameAskReply([])) : await modelAsk();
       }
       if (!gate.ok && gate.newCustomerNames) {
         // R18：回「是」时按原句与条目再过一次单闸（通行证不能跨消息保存）。
-        const askPayload = { names: gate.newCustomerNames, listed, businessDay: report.businessDay, text, gateEntries: gateEntriesFor(), source: parsedSource };
-        await writesFor(input).putOperationRecord(newCustomerAskKey(actor.personId, input.sessionId), JSON.stringify(askPayload));
+        const askPayload = { names: gate.newCustomerNames, listed, businessDay: report.businessDay,
+          expiresAt: zonedDateTime(report.businessDay, cutoff, timeZone).toISOString(), text, gateEntries: gateEntriesFor(), source: parsedSource };
+        const latestAsk = await actorFor(input.memberId);
+        if (!latestAsk || !same(latestAsk) || !await enabled(latestAsk) || !active()) return DENIED;
+        if (!await can(latestAsk, listed.some(item => item.employeeId !== actor.personId) ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
+
+        response.occupiesPending = true;
+        if (!await saveReport(actor, undefined, { key: newCustomerAskKey(actor.personId, input.sessionId), value: JSON.stringify({ ...askPayload, version: operationId, issuedAt: now().toISOString(), ...(input.arrivedAt ? { platformIssuedAt: input.arrivedAt } : {}), ...(expiredPendingReminder ? { replacedPending: true } : {}) }) })) return 'Front Claw：草稿版本已变化，请查原操作结果。';
         return newCustomerAskReply(gate.newCustomerNames);
       }
       if (!gate.ok) return await modelAsk();
@@ -1576,7 +1662,9 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       if (!latest || !owned(draft, latest, input) || !await targetsInStore(draft, latest) || !await enabled(latest) || !active()) return DENIED;
       if (latest.tier === 'owner') return OWNER_CANNOT_REPORT;
       if (!await can(latest, proxy ? 'report_proxy' : 'report_self')) return ACCESS_DENIED;
-      await writesFor(input).createDraft(draft);
+
+      response.occupiesPending = true;
+      if (!await saveReport(actor, draft)) return 'Front Claw：草稿版本已变化，请查原操作结果。';
       const saved = await store.getDraft(operationId);
       if (!saved || !owned(saved, latest, input) || meta(saved)?.fingerprint !== fingerprint) return 'Front Claw：同一消息内容冲突，未写入。';
       tag.access = needs(saved);
@@ -1602,9 +1690,17 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       text = `Front Claw：账本暂不可用，结果未知；请查「入账结果 ${operationId ?? input.messageId ?? ''}」，不要另报一笔。`;
       }
     }
+    if (input.text.trim() === '对' && text === DRAFT_EXPIRED_REREPORT) expiredPendingReminder = '';
+    if (abandonedPendingReminder) text = `${abandonedPendingReminder}\n${text}`;
+    // D182 唯一判定：追问未保存新挂起项，沿用本轮 preflight 的有效挂起位；D179 始终最后追加。
+    const pendingReminder = pendingSnapshot ? pendingConfirmationReminder(pendingSnapshot.drafts, pendingSnapshot.ask, now()) : '';
+    if (response.kind === 'ask' && !response.occupiesPending && pendingReminder) text += `\n${pendingReminder}`;
+    if (expiredPendingReminder) text += `${text ? '\n' : ''}${expiredPendingReminder}`;
     try { onEmployeeTrace?.({ messageId: input.messageId ?? '', ...(operationId ? { operationId } : {}), elapsedMs: performance.now() - started, outcome, ledgerSettled }); } catch { /* 观测故障不改变账目 */ }
     // 生成最终回复与平台投递分开；投递中断不能回滚已提交业务。
     onOutbound?.(text);
-    return { entry: 'unified', replies: [text], modelCalled: false, ...(ledgerSettled ? { ledgerSettled: true } : {}), access: tag.access ?? { capability: null, storeIds: [] } };
+    return { entry: 'unified', replies: [text], modelCalled: false, ...(newMessagePrepared ? { newMessagePrepared: true } : {}),
+      ...(expiredPendingReminder ? { expiredReminder: expiredPendingReminder } : {}),
+      ...(ledgerSettled ? { ledgerSettled: true } : {}), access: tag.access ?? { capability: null, storeIds: [] } };
   };
 }

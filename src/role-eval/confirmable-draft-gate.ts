@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { customerNameLooksContaminated, hasUnseenNegatedMakeup, looksLikeContaminatedReportLine, LEFTOVER_FRAGMENT_ASK } from './negated-makeup.js';
 import { clauseKind } from './scope-refusal.js';
 import { guardUtteranceAmounts } from './amount-guard.js';
-import { customerNamePolicyConfig, decideOpenedCustomerName, matchesCustomerNameStructure } from './customer-name-policy.js';
+import { customerNamePolicyConfig, decideOpenedCustomerName, matchesCustomerNameStructure, NOT_A_CUSTOMER_NAME_ASK } from './customer-name-policy.js';
 import { normalizeCustomerName } from './customer-conflict.js';
 import { nameInRoster } from './store-customer-roster.js';
 import { formatMaybeReportAsk } from './model-path-ask.js';
@@ -25,6 +25,7 @@ import {
   stripLinePrefix,
   stripTrailingReportEmoji,
   containsReportEmoji,
+  hasNonCustomerStandardLabel,
   parseBracketReportHeader,
   isOpenedSelfCustomerName,
   stripNegatedMakeupPhrases,
@@ -220,7 +221,7 @@ export function mayCreateConfirmableReportDraft(input: DraftGateInput): boolean 
  * R18 / 移交项 3：整句层面的不纯判断（只看文本，不读账本）。入口和循环在 D81 之前调用这里拿「先问」的结论和措辞，
  * 闸内 impureReason 用的是同一个函数——判断只有一处，入口/循环不再各自判。
  */
-export type TextImpurity = 'unseen-makeup' | 'contaminated-line' | 'invalid-format';
+export type TextImpurity = 'unseen-makeup' | 'contaminated-line' | 'invalid-format' | 'not-customer-name';
 
 /** D165：表内词未被语法剥掉说明没有分隔。表外残片由客户位的形态与名单结构判定，不列词。 */
 function hasUnstrippedReportPrefix(text: string): boolean {
@@ -242,6 +243,7 @@ export function textLevelImpurity(text: string, today: string): TextImpurity | n
       body = stripLinePrefix(bracket[2]!);
     }
     if (hasUnstrippedReportPrefix(body) || containsReportEmoji(body)) return 'invalid-format';
+    if (hasNonCustomerStandardLabel(body)) return 'not-customer-name';
   }
   return null;
 }
@@ -253,6 +255,7 @@ export function bracketImpurity(bareEmployee: string): 'employee-not-name' | nul
 
 /** 闸不通过时的追问措辞（与 R16/R17 原措辞一致）：未见否定补报 → 模型路径追问；残片 → 残片追问（除非能给出确认句）。 */
 export function askForTextImpurity(kind: TextImpurity, text: string, confirmedNames: ReadonlySet<string>): string {
+  if (kind === 'not-customer-name') return NOT_A_CUSTOMER_NAME_ASK;
   const ask = formatMaybeReportAsk(text, confirmedNames);
   if (kind === 'unseen-makeup') return ask;
   return ask.includes('是不是要报') ? ask : LEFTOVER_FRAGMENT_ASK;

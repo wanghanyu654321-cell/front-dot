@@ -1,5 +1,5 @@
 import type { Fence } from './fencing.js';
-import type { Draft, PerformanceStore, WriteFence } from './performance-store.js';
+import type { Draft, PendingConditions, PendingReportWrite, PendingReportResult, PerformanceStore, WriteFence } from './performance-store.js';
 
 /**
  * R3（A-P1-1）：消费者（OpenDot 适配器 → 员工入口）的唯一业务写入入口（应用侧）。
@@ -10,18 +10,27 @@ import type { Draft, PerformanceStore, WriteFence } from './performance-store.js
 export interface ConsumerWrites {
   createDraft(draft: Draft): Promise<void>;
   rewriteDraft(draft: Draft): Promise<void>;
-  transitionPending(expected: Draft, next: Draft): Promise<boolean>;
+  transitionPending(expected: Draft, next: Draft, conditions?: PendingConditions): Promise<boolean>;
   putOperationRecord(key: string, value: string): Promise<void>;
+  compareAndSetPendingAsk(key: string, expected: string, value: string, conditions: PendingConditions): Promise<boolean>;
 }
 export function writeFenceOf(fence: Fence | undefined, nowMs: () => number): WriteFence | undefined {
   return fence ? { key: fence.key, owner: fence.owner, epoch: fence.epoch, nowMs } : undefined;
 }
-export function consumerWrites(store: PerformanceStore, fence: Fence | undefined, nowMs: () => number): ConsumerWrites {
+export function consumerWrites(store: PerformanceStore, fence: Fence | undefined, nowMs: () => number): ConsumerWrites & { savePendingReport(write: PendingReportWrite): Promise<PendingReportResult> } {
   const f = writeFenceOf(fence, nowMs);
   return {
-    createDraft: draft => store.saveDraft(draft, { ifAbsent: true, fence: f }),
-    rewriteDraft: draft => store.saveDraft(draft, { ifAbsent: false, fence: f }),
-    transitionPending: (expected, next) => store.transitionPendingDraft(expected, next, f),
+    savePendingReport: async write => {
+      const snapshot = structuredClone(write);
+      if (!snapshot.draft) return store.replacePendingReport(snapshot, f);
+      const result = await store.saveDraft(structuredClone(snapshot.draft), { ifAbsent: true, fence: f, pendingReport: snapshot });
+      if (!result) throw Error('pending_report_result_missing');
+      return result;
+    },
+    createDraft: async draft => { await store.saveDraft({ ...draft, createdAt: new Date(nowMs()).toISOString() }, { ifAbsent: true, fence: f }); },
+    rewriteDraft: async draft => { await store.saveDraft(draft, { ifAbsent: false, fence: f }); },
+    transitionPending: (expected, next, conditions) => store.transitionPendingDraft(expected, next, f, conditions),
+    compareAndSetPendingAsk: (key, expected, value, conditions) => store.compareAndSetPendingAsk(key, expected, value, conditions, f),
     putOperationRecord: (key, value) => store.setConfig(key, value, f),
   };
 }
