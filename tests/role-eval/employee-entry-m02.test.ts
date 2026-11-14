@@ -44,7 +44,8 @@ describe('M02 路由：店务、闲聊和澄清不进营销', () => {
     expect(reply(await w.call('你好'))).toBe(CHITCHAT_REPLY);
     expect(reply(await w.call('对'))).toContain('没有待确认');
     await w.call('我的进度');
-    expect(reply(await w.call('报一下今天380然后帮我写个朋友圈文案'))).toBe(MULTI_REPLY);
+    // D165/D157：紧贴前缀且含复合请求，整句先问；不保证旧的通用复合句措辞。
+    expect(reply(await w.call('报一下今天380然后帮我写个朋友圈文案'))).toMatch(/没有写入/);
     expect(marketing.handle).not.toHaveBeenCalled(); expect(w.model).not.toHaveBeenCalled();
     expect(await w.snapshot()).toEqual(before);
   });

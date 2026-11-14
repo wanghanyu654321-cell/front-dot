@@ -93,10 +93,11 @@ describe('R7 D118 跨员工隐私与找店长改', () => {
     expect(live[0]!.amount).toBe(90000);
   });
 
+  // R18 / D155：原用自然句「林姐其实是880」触发二选一；自然句现归模型路径离线先问，改用纯标准行再报同一客户触发 D131。
   it('自己的单仍可「改第 N 笔」；可见数据不含 reporterPersonId；店长能看见并改本店别人的单', async () => {
     const w = await worldM05();
     await post(w, 'm-zhao', '林姐 680');
-    const ask = await w.call('m-zhao', '林姐其实是880');
+    const ask = await w.call('m-zhao', '林姐 880');
     expect(ask).toMatch(/改 1|本店今天已有记录/);
     expect(ask).toMatch(/680/);
     const listed = listedOf(await w.base.listDrafts({ status: 'pending' }));
@@ -192,7 +193,7 @@ describe('R7 D121 二选一自然说法放宽', () => {
     expect(add).toMatch(/新增一笔/);
     expect(await w3.call('m-zhao', '新增一笔')).toMatch(/还没入账/);
     expect(await w3.call('m-zhao', '对')).toContain('已入账');
-    const ask3 = await w3.call('m-zhao', '林姐其实是880');
+    const ask3 = await w3.call('m-zhao', '林姐 880');
     expect(ask3).toMatch(/本店今天已有记录|改 /);
     const listed = listedOf(await w3.base.listDrafts({ status: 'pending' }));
     expect(listed.length).toBeGreaterThanOrEqual(2);
@@ -209,7 +210,7 @@ describe('R7 D121 二选一自然说法放宽', () => {
     expect(a2).toMatch(/新增一笔/);
     await w4.call('m-zhao', '新增一笔');
     await w4.call('m-zhao', '对');
-    const ask4 = await w4.call('m-zhao', '林姐其实是990');
+    const ask4 = await w4.call('m-zhao', '林姐 990');
     expect(ask4).toMatch(/已有记录|改 /);
     const second = await w4.call('m-zhao', '第二个');
     expect(second).toMatch(/990|还没改|改账/);

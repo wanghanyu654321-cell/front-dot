@@ -158,7 +158,9 @@ describe('R17 单闸与纯标准行正向白名单', () => {
   it('纯标准行仍出草稿，不退化', async () => {
     for (const line of PURE) {
       const w = await worldM05();
-      const r = await w.call('m-zhao', line);
+      let r = await w.call('m-zhao', line);
+      // D165/D139：括号全名首报先确认客户；每张草稿仍须经过单闸。
+      if (r.includes('是新客户')) r = await w.call('m-zhao', '是');
       expect(r, line).toMatch(/还没入账/);
       expect((await w.base.listDrafts({ status: 'pending' })).length, line).toBe(1);
       await w.call('m-zhao', '取消');

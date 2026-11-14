@@ -90,8 +90,9 @@ describe('D125 一份语法：X姐 + 中文万/千', () => {
     expect(guardUtteranceAmounts(tail)).toMatchObject({ ok: true });
   });
 
-  it('「报个数」前缀、全角数字、行尾表情仍走快通道，草稿可封口', () => {
-    const t = '报个数钱姐６８０元😊';
+  // R18 / D158：原用表外前缀「报个数」；改用表内「报个单 」（带空白分隔），其余断言不变。
+  it('表内前缀「报个单」、全角数字、行尾表情仍走快通道，草稿可封口', () => {
+    const t = '报个单 钱姐６８０元😊';
     const r = tryStandardReport(t, DAY);
     expect(r.status, JSON.stringify(r)).toBe('complete');
     if (r.status === 'complete') {

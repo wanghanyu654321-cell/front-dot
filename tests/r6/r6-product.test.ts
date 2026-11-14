@@ -78,7 +78,21 @@ describe('R6 补报否定：不是昨天那种补报', () => {
 });
 
 describe('R6 P0 数据兜底：同客户再报必须二选一（不扩改单动词表）', () => {
-  const novel = ['张姐其实是880', '张姐金额弄成880', '张姐应当记880', '张姐 900', '张姐 880（小王）'];
+  // R18 / D155：自然句（「张姐其实是880」类）不是纯标准行，归模型路径，离线先问、不出任何草稿（含二选一）；
+  // 纯标准行再报同一客户仍触发二选一（D131）。两类都绝不是普通「还没入账」草稿。
+  const novel = ['张姐 900', '张姐 880（小王）'];
+  const naturalNovel = ['张姐其实是880', '张姐金额弄成880', '张姐应当记880'];
+
+  it('R18 / D155：同客户的自然句说法离线先问，不出草稿也不出二选一，零写入', async () => {
+    for (const phrase of naturalNovel) {
+      const w = await worldM05();
+      await firstPost(w, 'm-zhao', '张姐 736');
+      const reply = await w.call('m-zhao', phrase);
+      expect(reply, phrase).not.toMatch(/还没入账|新增一笔/);
+      expect(await w.base.listDrafts({ status: 'pending' }), phrase).toEqual([]);
+      expect((await w.base.listEntries()).filter(e => e.customerName === '张姐'), phrase).toHaveLength(1);
+    }
+  });
 
   it('自编、不在改单动词表里的说法全部触发二选一，绝不是普通「还没入账」草稿', async () => {
     for (const phrase of novel) {
@@ -97,7 +111,7 @@ describe('R6 P0 数据兜底：同客户再报必须二选一（不扩改单动�
   it('「对」在二选一期间不能提交；取消关闭草稿、零入账', async () => {
     const w = await worldM05();
     const first = await firstPost(w, 'm-zhao', '张姐 680');
-    const ask = await w.call('m-zhao', '张姐其实是880');
+    const ask = await w.call('m-zhao', '张姐 880');
     expect(ask).toMatch(/新增一笔/);
     const nope = await w.call('m-zhao', '对');
     expect(nope).toMatch(/不要直接回「对」/);
@@ -124,7 +138,7 @@ describe('R6 P0 数据兜底：同客户再报必须二选一（不扩改单动�
   it('选择「改 1」走进既有并排改单+权限；确认后是一笔被改，不是两笔', async () => {
     const w = await worldM05();
     const first = await firstPost(w, 'm-zhao', '张姐 680');
-    await w.call('m-zhao', '张姐其实是880');
+    await w.call('m-zhao', '张姐 880');
     const preview = await w.call('m-zhao', '改 1');
     expect(preview).toMatch(/还没改账|对照|原记录|680/);
     expect(preview).toMatch(/880/);
@@ -153,7 +167,7 @@ describe('R6 P0 数据兜底：同客户再报必须二选一（不扩改单动�
   it('员工改别人的单走既有权限（无 correct_store 则拒绝，零写入）', async () => {
     const w = await worldM05();
     await firstPost(w, 'm-wang-yj', '张姐 680（小赵）');
-    await w.call('m-zhao', '张姐其实是880');
+    await w.call('m-zhao', '张姐 880');
         const denied = await w.call('m-zhao', '改 1');
     // R7 D118：普通员工对别人的单不再给出「改 N」，回「找店长改」；仍是零写入。
     expect(denied).toMatch(/找店长改|没有权限|不能改|不允许这项操作/);

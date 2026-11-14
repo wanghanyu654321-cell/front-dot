@@ -3,7 +3,7 @@
  * 没改到草稿状态的第二次按已处理回复，不带第二次「已入账」。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { ALREADY_SETTLED_REPLY } from '../../src/role-eval/employee-loop.js';
+import { ALREADY_CONFIRMED_TEXT, ALREADY_SETTLED_REPLY } from '../../src/role-eval/employee-loop.js';
 import { confirmEntryId } from '../../src/role-eval/performance-store.js';
 import { gate, installPausePoints } from '../../src/role-eval/pause-points.js';
 import { worldM05 } from '../role-eval/appointment-fixture-m05.js';
@@ -48,7 +48,8 @@ describe('R17 确认幂等（D151）', () => {
     const booked = replies.filter(t => t.includes('已入账'));
     expect(booked, replies.join('\n---\n')).toHaveLength(1);
     const other = replies.find(t => !t.includes('已入账'))!;
-    expect(other).toMatch(/已经处理过了|草稿版本已变化|没有待确认/);
+    // R18 / D160：输家只回这一句（「已经入账」不含「已入账」字串），不多记一笔。
+    expect(other).toBe('Front Claw：这笔已经入账了，不用重复确认。');
     expect(other).not.toContain('已入账');
     expect(other).not.toContain('结果未知');
     const rows = (await w.base.listEntries({ status: 'confirmed' })).filter(r => r.customerName === '周老师' && r.amount === 68000);
@@ -56,11 +57,25 @@ describe('R17 确认幂等（D151）', () => {
     expect(rows.reduce((s, r) => s + r.amount, 0)).toBe(68000);
   });
 
-  it('已处理回复不含「已入账」，并带操作号', () => {
+  it('R18 / D160：重复确认回复恰为「这笔已经入账了，不用重复确认。」，不含「已入账」', () => {
     const text = ALREADY_SETTLED_REPLY('draft-abc');
-    expect(text).toContain('已经处理过了');
-    expect(text).toContain('入账结果 draft-abc');
-    expect(text).toContain('没有重复写入');
+    expect(text).toBe('Front Claw：这笔已经入账了，不用重复确认。');
+    expect(text).toBe(ALREADY_CONFIRMED_TEXT);
     expect(text).not.toMatch(/已入账/);
+  });
+
+  it('R18 / D160：确认入账后紧接着再回一次「对」，只回「已经入账了」，不多记一笔；中间隔了进入店务循环的别的消息就不再这么回', async () => {
+    const w = await worldM05();
+    expect(await w.call('m-zhao', '周老师：680（小赵）')).toContain('还没入账');
+    expect(await w.call('m-zhao', '对')).toContain('已入账');
+    const again = await w.call('m-zhao', '对');
+    expect(again).toBe(ALREADY_CONFIRMED_TEXT);
+    expect(again).not.toContain('已入账');
+    const rows = (await w.base.listEntries({ status: 'confirmed' })).filter(r => r.customerName === '周老师');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.amount).toBe(68000);
+    // 进入店务循环的任何别的消息（这里用「取消」）都会清掉标记；之后再回「对」按没有待确认草稿处理。
+    await w.call('m-zhao', '取消');
+    expect(await w.call('m-zhao', '对')).not.toBe(ALREADY_CONFIRMED_TEXT);
   });
 });

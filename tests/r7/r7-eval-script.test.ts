@@ -4,13 +4,14 @@
  */
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { evaluateCorpus, loadCorpus, percentile, runEvalCli, formatSummary } from './gate-eval.js';
 import { loadModelRuntimeConfig, createModelClassifier, isModelStub, stubModelClassifier } from '../../src/role-eval/model-classify.js';
 
-const SAMPLE = process.cwd() + '/tests/r7/fixtures/r7-eval-sample.jsonl';
-const STUB_CFG = process.cwd() + '/tests/r7/fixtures/r7-model-stub.json';
+// R18b：自编样例与桩配置只读当前 worktree，不访问其他 checkout。
+const SAMPLE = resolve(__dirname, 'fixtures/r7-eval-sample.jsonl');
+const STUB_CFG = resolve(__dirname, 'fixtures/r7-model-stub.json');
 
 describe('R7 评测脚本（自编样例）', () => {
   it('配置默认是桩，读文件可改超时，不改代码即可切换', () => {
@@ -35,9 +36,10 @@ describe('R7 评测脚本（自编样例）', () => {
     const out = await evaluateCorpus(items, { modelConfig: STUB_CFG });
     expect(out.total).toBe(8);
     expect(out.model.mode).toBe('stub');
-    expect(out.gate1_draft.of).toBe(2);
-    expect(out.gate1_draft.n).toBe(2);
-    expect(out.gate1_amount_correct.n).toBe(2);
+    // D165/D139：未知括号客户首报独立计数，从纯标准行门①分母排除。
+    expect(out.gate1_draft.of).toBe(1);
+    expect(out.gate1_draft.n).toBe(1);
+    expect(out.gate1_amount_correct.n).toBe(1);
     expect(out.gate2_executed.of).toBe(3);
     expect(out.gate2_executed.n).toBe(0);
     expect(out.gate3_direct.of).toBe(2);
@@ -47,7 +49,8 @@ describe('R7 评测脚本（自编样例）', () => {
     expect(out.latency_ms.p50).toBeGreaterThan(0);
     expect(out.latency_ms.p95).toBeGreaterThanOrEqual(out.latency_ms.p50!);
     const byId = Object.fromEntries(out.rows.map(r => [r.id, r]));
-    expect(byId.S001).toMatchObject({ outcome: 'draft', in_gate1: true, amount_ok: true });
+    // D165/D139：S001 原样保留样例标注，首报追问由汇总从门①分母排除。
+    expect(byId.S001).toMatchObject({ outcome: 'clarify', in_gate1: true });
     expect(byId.S002).toMatchObject({ outcome: 'draft', amount_ok: true });
     expect(byId.S002!.draftYuan).toContain(3300);
     expect(byId.S003!.outcome).toBe('clarify');
@@ -74,7 +77,8 @@ describe('R7 评测脚本（自编样例）', () => {
     expect(result.summary).toMatch(/门①/);
     expect(result.summary).toMatch(/p95=/);
     const saved = JSON.parse(readFileSync(outPath, 'utf8'));
-    expect(saved.gate1_draft.n).toBe(2);
+    // D165/D139：相同首报排除口径。
+    expect(saved.gate1_draft.n).toBe(1);
     expect(saved.gate2_executed.n).toBe(0);
     expect(saved.latency_ms.p50).toBeGreaterThan(0);
     expect(saved.rows).toHaveLength(8);

@@ -91,33 +91,23 @@ describe('D137 无括号紧贴归属：我=报单人，名字核对本店', () =
   });
 });
 
-describe('R10-05 报单和改账同时出现：报单出草稿，改账明说没办', () => {
-  it('逗号后「把刚才那笔改成」：出 680 草稿，说明改账没办，不把报单丢掉', async () => {
+describe('R10-05 → R18 / D157：报单和改账同时出现，整句先问', () => {
+  it('逗号后「把刚才那笔改成」：整句先问，不出报单草稿、不出改账草稿', async () => {
     const w = await worldM05();
     const r = await w.call('m-zhao', '钱姐：680（小赵），把刚才那笔改成880');
-    expect(r).toMatch(/还没入账/);
-    expect(r).toMatch(/680/);
-    expect(r).toMatch(/没有办|没办/);
-    expect(r).toMatch(/改成|刚才/);
-    expect(r).not.toMatch(/880 元还没入账|入账 880/);
+    expect(r).not.toMatch(/还没入账|还没改账/);
+    expect(r).toMatch(/没有写入/);
+    expect((await w.base.listDrafts({ status: 'pending' })).length).toBe(0);
   });
 
-  it('句号+然后、分号+同时、无标点紧贴改账：同样保住报单', async () => {
+  it('句号+然后、分号+同时、无标点紧贴改账：同样整句先问、零草稿', async () => {
     const w = await worldM05();
-    const a = await w.call('m-zhao', '周老师：760（小赵）。然后把上一笔改成1280');
-    expect(a).toMatch(/还没入账/);
-    expect(a).toMatch(/760/);
-    expect(a).toMatch(/没有办|没办/);
-    await w.call('m-zhao', '取消');
-    const b = await w.call('m-zhao', '钱姐：440（小王）；同时把刚才那笔改成880');
-    expect(b).toMatch(/还没入账/);
-    expect(b).toMatch(/440/);
-    expect(b).toMatch(/没有办|没办/);
-    await w.call('m-zhao', '取消');
-    const c = await w.call('m-zhao', '孙姨：990（小赵）把刚才那笔改成1280');
-    expect(c).toMatch(/还没入账/);
-    expect(c).toMatch(/990/);
-    expect(c).toMatch(/没有办|没办/);
+    for (const t of ['周老师：760（小赵）。然后把上一笔改成1280', '钱姐：440（小王）；同时把刚才那笔改成880', '孙姨：990（小赵）把刚才那笔改成1280']) {
+      const r = await w.call('m-zhao', t);
+      expect(r, t).not.toMatch(/还没入账|还没改账/);
+      expect(r, t).toMatch(/没有写入/);
+      expect((await w.base.listDrafts({ status: 'pending' })).length, t).toBe(0);
+    }
   });
 
   it('「顺带查我自己的进度」按 D144 归模型路径，离线先问不出草稿', async () => {

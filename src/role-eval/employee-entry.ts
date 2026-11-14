@@ -23,8 +23,7 @@ import {
 
 import { courtesyReply, isManagedQueryPhrase, isSelfProgressQuery, isStorePerfQuery, NOT_TODAY_REPLY, pastDayReportPhrase, scopeRefusal } from './scope-refusal.js';
 import { stripNegatedMakeupPhrases } from './standard-line.js';
-import { hasUnseenNegatedMakeup, looksLikeContaminatedReportLine, LEFTOVER_FRAGMENT_ASK } from './negated-makeup.js';
-import { formatMaybeReportAsk } from './model-path-ask.js';
+import { askForTextImpurity, textLevelImpurity } from './confirmable-draft-gate.js';
 import { collectConfirmedLedgerNames } from './store-customer-roster.js';
 
 /** 营销能力端口：只有明确营销意图、enabled 且本人获 marketing 授权才调用；端口拿不到 store。 */
@@ -141,14 +140,12 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
       // R15 / D146：没见过的否定补报（含带时间词前缀）先问，不走「只能报今天的单」，不出可确认草稿。
       {
         // 先认形状，不读账本；只有确定走模型追问时才取本店已确认名单（D146 收紧，D139「对」入账）。
-        const unseen = hasUnseenNegatedMakeup(input.text, stripNegatedMakeupPhrases);
-        const contaminated = looksLikeContaminatedReportLine(stripNegatedMakeupPhrases(input.text));
-        if (unseen || contaminated) {
+        // R18 / 移交项 3：结论与措辞都来自单闸模块（与闸内同一个 textLevelImpurity），入口不自己判。
+        const impurity = textLevelImpurity(input.text, today);
+        if (impurity) {
           const person = await options.store.getPersonByMember(input.memberId);
           const confirmed = person ? await collectConfirmedLedgerNames(options.store, person.storeId) : new Set<string>();
-          const modelAsk = formatMaybeReportAsk(input.text, confirmed);
-          if (unseen) return { reply: modelAsk };
-          return { reply: modelAsk.includes('是不是要报') ? modelAsk : LEFTOVER_FRAGMENT_ASK };
+          return { reply: askForTextImpurity(impurity, input.text, confirmed) };
         }
       }
       if ((decision.target === 'clarify' || decision.target === 'store') && pastDayReportPhrase(input.text, today)) return { reply: NOT_TODAY_REPLY };

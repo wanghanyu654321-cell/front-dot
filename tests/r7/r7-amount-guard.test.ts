@@ -122,7 +122,9 @@ describe('R7 绕过校验函数的金额不能进入草稿', () => {
   });
   it('入口：标准行与 0.33w / 3k 能出草稿（门①）', async () => {
     const w = await worldM05();
-    const a = await w.call('m-zhao', '张三：680（小赵）');
+    // D165/D139：未知全名先确认名字，金额口径不变。
+    expect(await w.call('m-zhao', '张三：680（小赵）')).toContain('是新客户');
+    const a = await w.call('m-zhao', '是');
     expect(a).toMatch(/还没入账/);
     expect(await w.call('m-zhao', '取消')).toMatch(/取消|关闭/);
     const b = await w.call('m-zhao', '钱姐 0.33w');

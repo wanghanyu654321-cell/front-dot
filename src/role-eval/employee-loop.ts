@@ -29,11 +29,10 @@ import { formatYuan } from './money.js';
 import { cannot } from './scope-refusal.js';
 import { guardUtteranceAmounts, guardIssueToReason, sealDraftAmounts, UnvalidatedAmountError, isStandardAmountLine } from './amount-guard.js';
 import { tryStandardReport, standardAskToReason, hasUnnegatedNonToday, classifyStandardRemark, ownershipConflictDetail, stripNegatedMakeupPhrases, NOT_CUSTOMER_NAME } from './standard-line.js';
-import { hasUnseenNegatedMakeup, looksLikeContaminatedReportLine, LEFTOVER_FRAGMENT_ASK } from './negated-makeup.js';
 import { formatMaybeReportAsk } from './model-path-ask.js';
-import { isBracketNotName, mayCreateConfirmableReportDraft } from './confirmable-draft-gate.js';
-import { collectConfirmedLedgerNames } from './store-customer-roster.js';
-import { decideOpenedNamesPolicy, isYesNewCustomerReply, newCustomerAskKey, newCustomerAskReply, notCustomerNameAskReply } from './customer-name-policy.js';
+import { askForTextImpurity, bracketImpurity, evaluateConfirmableReportDraft, textLevelImpurity, type ConfirmableDraftPass, type GateEntry } from './confirmable-draft-gate.js';
+import { collectConfirmedLedgerNames, collectKnownCustomerNames } from './store-customer-roster.js';
+import { isYesNewCustomerReply, newCustomerAskKey, newCustomerAskReply, notCustomerNameAskReply } from './customer-name-policy.js';
 import { customerNameConflicts } from './customer-conflict.js';
 import { validateModelChain, isReadOnlyQuery, type ModelClassification } from './model-classify.js';
 
@@ -53,25 +52,7 @@ type Access = NonNullable<HandleResult['access']>;
 interface Tag { access?: Access }
 /** R3：消费租约已不属于本实例时的结果（适配器不会把它发出去）。 */
 /** M01 入口的通用提示（没认出要办的店务）；R3：统一入口据此再判一次越权/跨店。 */
-/**
- * 进度、查询、认不出的残片：整句交模型。
- * 改账、预约、目标、以及真正的宣传（海报/文案等固定说法）仍走草稿＋没办。
- * 注意 clauseKind 把「帮我…」一律判成 marketing，那些不是宣传，不能据此保住草稿。
- */
-function shouldHandCompoundToModel(compound: string): boolean {
-  const k = clauseKind(compound);
-  if (k === 'correction' || k === 'appointment' || k === 'target') return false;
-  const flat = compound.normalize('NFKC').replace(/^[，,;；、。.\s]+/, '').trim();
-  if (k === 'marketing' && /海报|文案|朋友圈|小红书|宣传|推广|种草|标语/.test(flat)) return false;
-  // 同一件报单的复述（「帮小林登记下」），不是另一件事，继续出草稿。
-  if (isSameReportRestatement(flat)) return false;
-  return true;
-}
-
-function isSameReportRestatement(flat: string): boolean {
-  if (/查|看|问|列|进度|业绩|排名|汇总|还差|几单|预约|改成|海报|文案|目标/.test(flat)) return false;
-  return /(?:帮.{0,8})?(?:登记|记下|记一下|报一下|报上|登一下)下?$/.test(flat);
-}
+/** R18 / D157：原 shouldHandCompoundToModel（改账/预约/目标/宣传/复述保留草稿）已删除——复合句一律整句先问，由单闸判定。 */
 
 export const REPORT_HINT = 'Front Claw：请发标准清单，例如「11号测试A店\n380（小林）」，括号里写业绩归属的本店员工；可发送「我的进度」。没有写入任何账目。';
 export const STALE_CONSUMER = 'Front Claw：本实例已不再负责这条消息，没有写入。';
@@ -114,7 +95,10 @@ const CONFLICT = 'Front Claw：对象在你确认前已被改动（可能别人�
 const NO_DRAFT = 'Front Claw：没有待确认的本人草稿，请先发送报数清单。';
 /** D143：过期草稿回「对」的固定回复；请重新报，未入账。 */
 export const DRAFT_EXPIRED_REREPORT = 'Front Claw：这笔已过期，请重新报。（未入账）';
-export const ALREADY_SETTLED_REPLY = (id: string) => `Front Claw：这笔已经处理过了，请查「入账结果 ${id}」，没有重复写入。`;
+/** R18 / D160：重复回「对」只回这一句；不含「已入账」，也不多记一笔。 */
+export const ALREADY_CONFIRMED_TEXT = 'Front Claw：这笔已经入账了，不用重复确认。';
+export const ALREADY_SETTLED_REPLY = (_id?: string) => ALREADY_CONFIRMED_TEXT;
+const d160Key = (personId: string, sessionId: string) => `employee-loop:d160-last-confirm:${personId}:${sessionId}`;
 export const DENIED = 'Front Claw：仅支持本人或同店同事的报数、本人确认与进度；当前身份或对象不符合要求（跨店不能代报），没有写入。';
 /** R7：找店长改——只提示、零写入。 */
 export const ASK_MANAGER_HINT = 'Front Claw：请联系本店店长修改已有的那笔单。这条不会改账，也没有写入。';
@@ -530,6 +514,29 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
     return (await store.getDraft(draft.draftId))!;
   }
   const finishAny = (draft: Draft, actor: Person, input: EmployeeMessage) => draft.kind === 'report' ? finish(draft, actor, input) : draft.kind === 'appointment' ? finishAppointment(draft, actor, input) : finishLedger(draft, actor, input);
+  /**
+   * R18 / D152：员工循环里组装报单草稿的唯一地方。必须出示单闸签发的通行证（ConfirmableDraftPass）；
+   * 二选一草稿（选「新增」后会变成可确认草稿）也从这里出。结构性测试钉住：本文件里报单草稿 payload 的字面量只出现在这里。
+   */
+  function buildConfirmableReportDraft(pass: ConfirmableDraftPass, args: {
+    actor: Person; input: EmployeeMessage; fingerprint: string; operationId: string; businessDay: string;
+    added: ReportDraftItem[]; duplicates: ReportDraftItem[];
+    awaitingDuplicateChoice?: NonNullable<import('./performance-store.js').ReportPayload['awaitingDuplicateChoice']>;
+  }): Draft {
+    if (pass.marker !== 'R17-single-draft-gate') throw Error('confirmable_draft_without_gate_pass');
+    const { actor, input, fingerprint, operationId, businessDay, added, duplicates, awaitingDuplicateChoice } = args;
+    const proxy = added.some(item => item.employeeId !== actor.personId);
+    return {
+      draftId: operationId, reporterPersonId: actor.personId, storeId: actor.storeId, businessDay,
+      expiresAt: zonedDateTime(businessDate(now(), cutoff, timeZone), cutoff, timeZone).toISOString(), kind: 'report',
+      payload: { type: 'report', added, missing: [], skipped: duplicates.length, ...(duplicates.length ? { duplicates } : {}),
+        ...(awaitingDuplicateChoice ? { awaitingDuplicateChoice } : {}),
+        employeeContext: { sessionId: input.sessionId, bindingVersion: input.bindingVersion!, accountId: actor.accountId,
+          memberId: actor.memberId, version: fingerprint, messageId: input.messageId, fingerprint,
+          itemsDigest: itemsDigest(added), ...(proxy ? { proxy: true } : {}) } },
+      status: 'pending', reminder: 'none', voidNotice: 'none', createdAt: now().toISOString(), closedAt: null,
+    } as Draft;
+  }
   async function finishAndReply(draft: Draft, actor: Person, input: EmployeeMessage): Promise<{ reply: string; settled: boolean; saved: Draft }> {
     if (draft.kind === 'report') {
       const { saved, changed } = await finishReport(draft, actor, input);
@@ -962,6 +969,10 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         tag.access = { capability: 'progress_self', storeIds: [actor.storeId] };
         return resultText(found);
       }
+      // R18 / D160：除「对/全部确认」外的任何消息都清掉「刚确认过」标记。
+      if (text !== '对' && text !== '全部确认' && (await store.getConfig(d160Key(actor.personId, input.sessionId)))?.trim()) {
+        await writesFor(input).putOperationRecord(d160Key(actor.personId, input.sessionId), '');
+      }
       const fingerprint = hash([text]);
       const replay = drafts.find(d => meta(d)?.messageId === input.messageId || meta(d)?.actionMessageId === input.messageId);
       if (replay) {
@@ -1098,7 +1109,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       const newAskRaw = (await store.getConfig(newAskKey))?.trim();
       if (newAskRaw) {
         await writesFor(input).putOperationRecord(newAskKey, '');
-        type SavedAsk = { names: string[]; listed: ReportDraftItem[]; businessDay: string };
+        type SavedAsk = { names: string[]; listed: ReportDraftItem[]; businessDay: string; text?: string; gateEntries?: GateEntry[]; source?: 'standard' | 'natural' };
         let savedAsk: SavedAsk | null = null;
         try { savedAsk = JSON.parse(newAskRaw) as SavedAsk; } catch { savedAsk = null; }
         if (!savedAsk?.listed?.length || !isYesNewCustomerReply(text)) {
@@ -1107,6 +1118,10 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         if (pending.length || drafts.some(d => d.status === 'confirming')) {
           return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
         }
+        // R18 / D152：回「是」后再过一次单闸（原句与条目随追问一起存下）；不过就先问，不出草稿。
+        const gateYes = evaluateConfirmableReportDraft({ text: savedAsk.text ?? '', today: savedAsk.businessDay, employeeNames: new Set([...(await store.listPeople()).filter(p => p.active && p.storeId === actor.storeId).map(p => p.displayName), ...(await store.listAliases(actor.storeId)).map(a => a.alias)]),
+          liveModelAllowsDraft: false, entries: savedAsk.gateEntries ?? savedAsk.listed.map(i => ({ customer: i.customer ?? null, employeeName: i.employeeId === actor.personId ? '' : i.employeeName, compound: null })), source: savedAsk.source ?? 'standard', confirmedNewNames: savedAsk.names, knownCustomerNames: await collectKnownCustomerNames(store, actor.storeId) });
+        if (!gateYes.ok) return 'Front Claw：没有写入。';
         // D139-roster: 回「是」只出草稿，不把名字写入任何名单状态；已知客户只在「对」确认入账后从本店已确认账本推导。
         // D131：回「是」当天若已有同名确认单，仍走二选一，不直接出新草稿。
         const todayConfirmedYes = (await store.listEntries({ storeId: actor.storeId, businessDay: savedAsk.businessDay, status: 'confirmed' }))
@@ -1130,16 +1145,8 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
           const reason = `本店今天已经有「${names}」的单（任意报单人都算），这次不能直接当成新的一笔入账。`;
           const proxyChoice = savedAsk.listed.some(item => item.employeeId !== actor.personId);
           operationId = hash(['employee-loop:m01', input.sessionId, input.messageId]);
-          const choiceDraft: Draft = {
-            draftId: operationId, reporterPersonId: actor.personId, storeId: actor.storeId, businessDay: savedAsk.businessDay,
-            expiresAt: zonedDateTime(businessDate(now(), cutoff, timeZone), cutoff, timeZone).toISOString(), kind: 'report',
-            payload: { type: 'report', added: [...savedAsk.listed], missing: [], skipped: 0,
-              awaitingDuplicateChoice: { listed: listedPicks, reason, newAmount },
-              employeeContext: { sessionId: input.sessionId, bindingVersion: input.bindingVersion!, accountId: actor.accountId,
-                memberId: actor.memberId, version: fingerprint, messageId: input.messageId, fingerprint,
-                itemsDigest: itemsDigest([...savedAsk.listed]), ...(proxyChoice ? { proxy: true } : {}) } },
-            status: 'pending', reminder: 'none', voidNotice: 'none', createdAt: now().toISOString(), closedAt: null,
-          };
+          const choiceDraft = buildConfirmableReportDraft(gateYes.pass, { actor, input, fingerprint, operationId, businessDay: savedAsk.businessDay,
+            added: [...savedAsk.listed], duplicates: [], awaitingDuplicateChoice: { listed: listedPicks, reason, newAmount } });
           const latestChoice = await actorFor(input.memberId);
           if (!latestChoice || !owned(choiceDraft, latestChoice, input) || !await targetsInStore(choiceDraft, latestChoice) || !await enabled(latestChoice) || !active()) return DENIED;
           if (latestChoice.tier === 'owner') return OWNER_CANNOT_REPORT;
@@ -1154,15 +1161,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         if (!addedYes.length) return `Front Claw：这份清单的 ${dupYes.length} 笔今天都已入账，没有新增，没有写入。如确是新的一笔，请在客户名或备注里写明区别后重发。`;
         const proxyYes = addedYes.some(item => item.employeeId !== actor.personId);
         operationId = hash(['employee-loop:m01', input.sessionId, input.messageId]);
-        const draftYes: Draft = {
-          draftId: operationId, reporterPersonId: actor.personId, storeId: actor.storeId, businessDay: savedAsk.businessDay,
-          expiresAt: zonedDateTime(businessDate(now(), cutoff, timeZone), cutoff, timeZone).toISOString(), kind: 'report',
-          payload: { type: 'report', added: addedYes, missing: [], skipped: dupYes.length, ...(dupYes.length ? { duplicates: dupYes } : {}),
-            employeeContext: { sessionId: input.sessionId, bindingVersion: input.bindingVersion!, accountId: actor.accountId,
-              memberId: actor.memberId, version: fingerprint, messageId: input.messageId, fingerprint,
-              itemsDigest: itemsDigest(addedYes), ...(proxyYes ? { proxy: true } : {}) } },
-          status: 'pending', reminder: 'none', voidNotice: 'none', createdAt: now().toISOString(), closedAt: null,
-        };
+        const draftYes = buildConfirmableReportDraft(gateYes.pass, { actor, input, fingerprint, operationId, businessDay: savedAsk.businessDay, added: addedYes, duplicates: dupYes });
         const latestYes = await actorFor(input.memberId);
         if (!latestYes || !owned(draftYes, latestYes, input) || !await targetsInStore(draftYes, latestYes) || !await enabled(latestYes) || !active()) return DENIED;
         if (latestYes.tier === 'owner') return OWNER_CANNOT_REPORT;
@@ -1194,8 +1193,18 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
             const done = await finishAndReply(stale, latest, input);
             ledgerSettled = done.settled;
             tag.access = needs(stale);
+            if (done.settled && stale.kind === 'report') await writesFor(input).putOperationRecord(d160Key(actor.personId, input.sessionId), stale.draftId);
             return done.reply;
           }
+        }
+        // R18 / D160：没有待确认草稿时重复回「对」，若本人本会话最近一张报单草稿已确认入账，只回一次「已经入账了」。
+        // 只认「上一条消息就是把报单确认入账的那条」：确认成功时记下标记，任何别的消息都会清掉它。
+        if (pending.length === 0 && text !== '取消') {
+          const lastId = (await store.getConfig(d160Key(actor.personId, input.sessionId)))?.trim();
+          const lastReport = lastId ? drafts.find(d => d.draftId === lastId) : undefined;
+          if (lastReport?.kind === 'report' && lastReport.status === 'confirmed' && Date.parse(lastReport.expiresAt) > now().getTime()) return ALREADY_CONFIRMED_TEXT;
+          // D162：只在无待确认草稿路径读/清标记；不改变并发确认路径的存储时序。
+          if (lastId) await writesFor(input).putOperationRecord(d160Key(actor.personId, input.sessionId), '');
         }
         if (pending.length !== 1) return NO_DRAFT;
         const draft = pending[0]!; operationId = draft.draftId;
@@ -1248,23 +1257,28 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
           const voided = { ...next, status: 'void', closedAt: now().toISOString(), payload: { ...next.payload, outcome: 'conflict' } } as Draft;
           return await writesFor(input).transitionPending(draft, voided) ? CONFLICT : 'Front Claw：草稿版本已变化，请查原操作结果。';
         }
-        if (!await writesFor(input).transitionPending(draft, next)) return 'Front Claw：草稿版本已变化，请查原操作结果。';
+        if (!await writesFor(input).transitionPending(draft, next)) {
+          // R18 / D160：并发回「对」的输家——对方已把这张草稿推进到确认中/已确认，只回「已经入账了」，不多记一笔、不出「已入账」。
+          if (next.status !== 'void' && draft.kind === 'report') {
+            const now2 = await store.getDraft(draft.draftId);
+            if (now2 && (now2.status === 'confirmed' || now2.status === 'confirming')) return ALREADY_CONFIRMED_TEXT;
+          }
+          return 'Front Claw：草稿版本已变化，请查原操作结果。';
+        }
         if (next.status === 'void') return resultText(next);
-        const done = await finishAndReply(next, latest, input); ledgerSettled = done.settled; tag.access = needs(next); return done.reply;
+        const done = await finishAndReply(next, latest, input); ledgerSettled = done.settled; tag.access = needs(next);
+        if (done.settled && next.kind === 'report') await writesFor(input).putOperationRecord(d160Key(actor.personId, input.sessionId), next.draftId);
+        return done.reply;
       }
       const today = businessDate(now(), cutoff, timeZone);
       // R8：标准行先走同一份语法（D125）。否定/小额小数追问（D122/D123），非今天拒（D124）。
       const std = tryStandardReport(text, today);
       const modelAsk = async () => formatMaybeReportAsk(text, await collectConfirmedLedgerNames(store, actor.storeId));
-      // R16 / D146：没见过的否定补报整句交模型路径，离线先问，不出可确认草稿。
-      // 具体追问的客户名只取本店已确认账本，金额只取 amount-guard。
-      if (hasUnseenNegatedMakeup(text, stripNegatedMakeupPhrases)) {
-        return await modelAsk();
-      }
-      // R16 / D147：客户位残片先问，不出可确认草稿。
-      if (looksLikeContaminatedReportLine(stripNegatedMakeupPhrases(text))) {
-        const ask = await modelAsk();
-        return ask.includes('是不是要报') ? ask : LEFTOVER_FRAGMENT_ASK;
+      // R18 / 移交项 3：D146 未见否定补报、D147 客户位残片的「先问」结论来自单闸模块（textLevelImpurity，与闸内同一函数），
+      // 这里只负责在 D81 之前给出原措辞，不自己判断。
+      {
+        const impurity = textLevelImpurity(text, today);
+        if (impurity) return askForTextImpurity(impurity, text, await collectConfirmedLedgerNames(store, actor.storeId));
       }
       // R16 / D145 撤销：不是纯标准行（标准行＋进度/查询/认不出的残片）整句交模型，报单也不单独出草稿。
       // 改账、预约、宣传等既有「草稿＋后半句没办」口径仍保留在规则层（D145 撤销说明由模型路径在实测达成，这些组合本轮不改）。
@@ -1416,6 +1430,8 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         return REPORT_HINT;
       }
       const report = parsed.report;
+      // R18 / D155：记下条目来源；自然句抽取不是纯标准行。
+      const parsedSource: 'standard' | 'natural' = std.status === 'complete' || (loose.status === 'complete' && !looseSwallowed) ? 'standard' : 'natural';
       // R3（D81 已定口径）：非今天的单 → 固定一句，不追问；是否开放补报待 hanyu 拍板。
       if (report.businessDay !== today) return withLeftover(NOT_TODAY_REPLY, text, 'report');
       if (report.storeName && report.storeName !== actor.storeName) return withLeftover(DENIED, text, 'report');
@@ -1423,20 +1439,31 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       // M02 同店代报：括号里的员工必须能在本店唯一匹配到在职完整人员，业绩记给该员工；匹配不到（含他店员工）即拒绝，零写入。
       // R2：无括号的自然句报数记给本人；「X店小王」里的门店名必须是本店。
       const entryStore = (item: ParsedEntry & { storeName?: string | null }) => item.storeName ?? splitStore(item.employeeName).storeName;
-      if (report.entries.some(item => { const named = entryStore(item); return named !== null && named !== actor.storeName; })) return withLeftover(DENIED, text, 'report');
-      const targets = report.entries.map(item => ((item as { self?: boolean }).self || !item.employeeName.trim()) ? actor
-        : matchPerson(people, aliases, actor.storeId, (item as { storeName?: string | null }).storeName ? item.employeeName : splitStore(item.employeeName).employeeName));
-      // R17 / D152：括号内容先过非名字表，再查名单。非名字或谁都对不上 → 通用先问（不是跨店拒绝）；对上他店人员才按跨店拒绝。
-      {
-        const allAliases = aliases;
-        const bracketAsk = report.entries.some((item, index) => {
-          if ((item as { self?: boolean }).self || !item.employeeName.trim() || targets[index]) return false;
-          const bare = ((item as { storeName?: string | null }).storeName ? item.employeeName : splitStore(item.employeeName).employeeName).normalize('NFKC').replace(/\s+/g, '');
-          // R17-paren-not-name-first：非名字（含括号身份/时段词）先问；像人名但对不上本店的，仍按 M02 跨店/查无此人拒绝。
-          void allAliases;
-          return isBracketNotName(bare);
-        });
-        if (bracketAsk) return await modelAsk();
+      const bareEmployee = (item: ParsedEntry & { storeName?: string | null }) => (item.storeName ? item.employeeName : splitStore(item.employeeName).employeeName).normalize('NFKC').replace(/\s+/g, '');
+      // R18 / D159：括号里写「姓＋店长」——本店店长也是本店员工。本店在职店长里按姓唯一对上就记给他；对不上或不止一个 → 先问。
+      // 「老板」不算员工位（D156 粗筛表里有），先问。跨店、代报的拒绝语义不变（只在本店店长里找）。
+      const managerTitle = (item: ParsedEntry & { storeName?: string | null }) => {
+        if ((item as { self?: boolean }).self || !item.employeeName.trim() || item.storeName) return null;
+        return /^([\u4e00-\u9fa5]{1,2})店长$/.exec(item.employeeName.normalize('NFKC').replace(/\s+/g, ''));
+      };
+      const managerAsk = report.entries.some(item => {
+        const m = managerTitle(item);
+        if (!m) return false;
+        const hits = people.filter(p => p.active && p.storeId === actor.storeId && p.tier === 'manager' && p.displayName.startsWith(m[1]!));
+        return hits.length !== 1;
+      });
+      if (managerAsk) return await modelAsk();
+      if (report.entries.some(item => { if (managerTitle(item)) return false; const named = entryStore(item); return named !== null && named !== actor.storeName; })) return withLeftover(DENIED, text, 'report');
+      const targets = report.entries.map(item => {
+        if ((item as { self?: boolean }).self || !item.employeeName.trim()) return actor;
+        const m = managerTitle(item);
+        if (m) return people.find(p => p.active && p.storeId === actor.storeId && p.tier === 'manager' && p.displayName.startsWith(m[1]!)) ?? null;
+        return matchPerson(people, aliases, actor.storeId, (item as { storeName?: string | null }).storeName ? item.employeeName : splitStore(item.employeeName).employeeName);
+      });
+      // R18 / D156 + 移交项 3：括号先过单闸模块的粗筛（bracketImpurity），非名字 → 通用先问（不是跨店拒绝）；
+      // 像人名但对不上本店的，仍按 M02 跨店/查无此人拒绝。判断在闸模块，这里只决定在跨店拒绝之前给追问。
+      if (report.entries.some((item, index) => !(item as { self?: boolean }).self && !!item.employeeName.trim() && !targets[index] && bracketImpurity(bareEmployee(item)))) {
+        return await modelAsk();
       }
       if (targets.some(target => !complete(target) || target!.storeId !== actor.storeId || target!.storeName !== actor.storeName)) return withLeftover(DENIED, text, 'report');
       if (pending.length || drafts.some(d => d.status === 'confirming')) return 'Front Claw：请先确认或取消当前草稿，结果未知时查原操作号。';
@@ -1483,6 +1510,21 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         }
         return withLeftover(`Front Claw：行尾备注「${modelNotes[0]}」需要确认后再记。没有写入任何账目。`, text, 'report');
       }
+      // R18 / D152 单闸（唯一出口）：在 D131 二选一、D139 新客户追问、建草稿之前算一次。二选一草稿（选「新增」后变成可确认草稿）、
+      // 「是新客户」回「是」后出的草稿、以及直接出的草稿，都必须拿着这张通行证组装；闸不过一律先问。
+      // D155：自然句抽取（extractReport）的条目不是纯标准行，source='natural'，离线不开闸。
+      const gateEntriesFor = (): GateEntry[] => report.entries.map((item, i) => ({
+        customer: item.customer,
+        employeeName: (item as { self?: boolean }).self || !item.employeeName.trim() ? item.employeeName : (managerTitle(item) ? targets[i]!.displayName : item.employeeName),
+        ...((item as { self?: boolean }).self ? { self: true } : {}),
+        compound: item.compound ?? null,
+        storeName: (item as { storeName?: string | null }).storeName ?? null,
+      }));
+      const gateEmployeeNames = new Set<string>([
+        ...people.filter(p => p.active && p.storeId === actor.storeId).map(p => p.displayName),
+        ...aliases.filter(a => a.storeId === actor.storeId).map(a => a.alias),
+      ]);
+      const gate = evaluateConfirmableReportDraft({ text, today, employeeNames: gateEmployeeNames, liveModelAllowsDraft: false, entries: gateEntriesFor(), source: parsedSource, knownCustomerNames: await collectKnownCustomerNames(store, actor.storeId) });
       // R6 数据兜底 + D131 包含匹配宁可多触发：已有客户名出现在这一行里就进二选一。
       const todayConfirmed = (await store.listEntries({ storeId: actor.storeId, businessDay: report.businessDay, status: 'confirmed' }))
         .filter(row => row.status === 'confirmed' && row.storeId === actor.storeId && row.businessDay === report.businessDay);
@@ -1493,7 +1535,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         ...customerNameConflicts(text, existingNames, [...reportCustomers]),
       ]);
       const conflicts = todayConfirmed.filter(row => row.customerName && conflictNames.has(row.customerName));
-      if (conflicts.length) {
+      if (conflicts.length && gate.ok) {
         const names = [...new Set(conflicts.map(r => r.customerName))].join('、');
         const listedPicks = conflicts
           .slice()
@@ -1503,16 +1545,8 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         const newAmount = matching?.amount ?? listed[0]!.amount;
         const reason = `本店今天已经有「${names}」的单（任意报单人都算），这次不能直接当成新的一笔入账。`;
         const proxyChoice = listed.some(item => item.employeeId !== actor.personId);
-        const choiceDraft: Draft = {
-          draftId: operationId, reporterPersonId: actor.personId, storeId: actor.storeId, businessDay: report.businessDay,
-          expiresAt: zonedDateTime(businessDate(now(), cutoff, timeZone), cutoff, timeZone).toISOString(), kind: 'report',
-          payload: { type: 'report', added: [...listed], missing: [], skipped: 0,
-            awaitingDuplicateChoice: { listed: listedPicks, reason, newAmount },
-            employeeContext: { sessionId: input.sessionId, bindingVersion: input.bindingVersion!, accountId: actor.accountId,
-              memberId: actor.memberId, version: fingerprint, messageId: input.messageId, fingerprint,
-              itemsDigest: itemsDigest([...listed]), ...(proxyChoice ? { proxy: true } : {}) } },
-          status: 'pending', reminder: 'none', voidNotice: 'none', createdAt: now().toISOString(), closedAt: null,
-        };
+        const choiceDraft = buildConfirmableReportDraft(gate.pass, { actor, input, fingerprint, operationId, businessDay: report.businessDay,
+          added: [...listed], duplicates: [], awaitingDuplicateChoice: { listed: listedPicks, reason, newAmount } });
         const latestChoice = await actorFor(input.memberId);
         if (!latestChoice || !owned(choiceDraft, latestChoice, input) || !await targetsInStore(choiceDraft, latestChoice) || !await enabled(latestChoice) || !active()) return DENIED;
         if (latestChoice.tier === 'owner') return OWNER_CANNOT_REPORT;
@@ -1523,46 +1557,21 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         tag.access = needs(savedChoice);
         return withLeftover(`${actor.storeName}\n${resultText(savedChoice)}`, text, 'report');
       }
-      // D139-C：不带括号、非姓＋称谓的名字走客户名政策（默认 C）。完整解析已过，不缩小语法。
-      const policyDecision = await decideOpenedNamesPolicy(
-        store,
-        actor.storeId,
-        report.entries.map((item, i) => ({ customer: listed[i]!.customer, self: (item as { self?: boolean }).self })),
-      );
-      if (policyDecision.kind === 'deny') {
-        return notCustomerNameAskReply(policyDecision.names);
+      // D139/D153/D165：客户三档只读单闸结论；入口/循环不另判。
+      if (!gate.ok && !gate.newCustomerNames) {
+        return gate.reason.startsWith('customer:') ? notCustomerNameAskReply([]) : await modelAsk();
       }
-      if (policyDecision.kind === 'ask-new') {
-        const askPayload = { names: policyDecision.names, listed, businessDay: report.businessDay };
+      if (!gate.ok && gate.newCustomerNames) {
+        // R18：回「是」时按原句与条目再过一次单闸（通行证不能跨消息保存）。
+        const askPayload = { names: gate.newCustomerNames, listed, businessDay: report.businessDay, text, gateEntries: gateEntriesFor(), source: parsedSource };
         await writesFor(input).putOperationRecord(newCustomerAskKey(actor.personId, input.sessionId), JSON.stringify(askPayload));
-        return newCustomerAskReply(policyDecision.names);
+        return newCustomerAskReply(gate.newCustomerNames);
       }
-      // R17 / D152 单闸（放在 D81/跨店/权限/D133/D130/D131 等既有拒绝与追问之后、建草稿之前）：可确认报单草稿只允许纯标准行（或线上模型）。离线桩不得出草稿。
-      {
-        const aliasesForGate = await store.listAliases(actor.storeId);
-        const employeeNames = new Set<string>([
-          ...people.filter(p => p.active && p.storeId === actor.storeId).map(p => p.displayName),
-          ...aliasesForGate.filter(a => a.storeId === actor.storeId).map(a => a.alias),
-        ]);
-        // 自然句抽取不是标准行（D144），不得开闸；标准行与标准清单按已解析条目判纯。
-        // 已解析条目逐条判纯（客户位正向形态、括号先过非名字表再对本店员工、无第二件查询）。
-        // 注：自然句抽取（extractReport）的条目目前也在此判纯，未一刀切交模型——见 REPORT「未完成/移交」。
-        if (!mayCreateConfirmableReportDraft({ text, today, employeeNames, liveModelAllowsDraft: false, entries: report.entries, compoundKeepsDraft: c => !shouldHandCompoundToModel(c) })) {
-          return await modelAsk();
-        }
-      }
+      if (!gate.ok) return await modelAsk();
       const { fresh: added, duplicates } = await splitDuplicates(actor.storeId, report.businessDay, listed);
       if (!added.length) return `Front Claw：这份清单的 ${duplicates.length} 笔今天都已入账，没有新增，没有写入。如确是新的一笔，请在客户名或备注里写明区别后重发。`;
       const proxy = added.some(item => item.employeeId !== actor.personId);
-      const draft: Draft = {
-        draftId: operationId, reporterPersonId: actor.personId, storeId: actor.storeId, businessDay: report.businessDay,
-        expiresAt: zonedDateTime(businessDate(now(), cutoff, timeZone), cutoff, timeZone).toISOString(), kind: 'report',
-        payload: { type: 'report', added, missing: [], skipped: duplicates.length, ...(duplicates.length ? { duplicates } : {}),
-          employeeContext: { sessionId: input.sessionId, bindingVersion: input.bindingVersion!, accountId: actor.accountId,
-            memberId: actor.memberId, version: fingerprint, messageId: input.messageId, fingerprint,
-            itemsDigest: itemsDigest(added), ...(proxy ? { proxy: true } : {}) } },
-        status: 'pending', reminder: 'none', voidNotice: 'none', createdAt: now().toISOString(), closedAt: null,
-      };
+      const draft = buildConfirmableReportDraft(gate.pass, { actor, input, fingerprint, operationId, businessDay: report.businessDay, added, duplicates });
       const latest = await actorFor(input.memberId);
       if (!latest || !owned(draft, latest, input) || !await targetsInStore(draft, latest) || !await enabled(latest) || !active()) return DENIED;
       if (latest.tier === 'owner') return OWNER_CANNOT_REPORT;

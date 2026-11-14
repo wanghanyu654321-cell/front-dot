@@ -58,12 +58,13 @@ describe('D139-C 本店已知客户直接出草稿', () => {
     await w.call('m-zhao', '取消');
   });
 
-  it('带括号的「苏晓禾：680（小赵）」不走新客户追问，直接出草稿', async () => {
+  it('带括号未知全名也只问新客户，回是后才出草稿', async () => {
     const w = await worldM05();
     const r = await w.call('m-zhao', '苏晓禾：680（小赵）');
-    expect(r).toMatch(/还没入账/);
-    expect(r).toMatch(/\n客户：苏晓禾\n/);
-    expect(r).not.toMatch(/是新客户/);
+    // D165：员工位对上不能跳过 D139 第三档。
+    expect(r).toBe('Front Claw：是新客户「苏晓禾」吗？');
+    expect(await w.base.listDrafts({ status: 'pending' })).toHaveLength(0);
+    expect(await w.call('m-zhao', '是')).toMatch(/还没入账/);
     await w.call('m-zhao', '取消');
   });
 
@@ -87,7 +88,9 @@ describe('D131 / D137 不回退', () => {
   it('D131：已确认「李小雪」后再发不带括号的「李小雪：880」进二选一', async () => {
     const w = await worldM05();
     const first = await w.call('m-zhao', '李小雪：680（小赵）');
-    expect(first).toMatch(/还没入账/);
+    // D165/D139：括号未知客户也先确认名字，再确认入账。
+    expect(first).toContain('是新客户');
+    expect(await w.call('m-zhao', '是')).toMatch(/还没入账/);
     expect(await w.call('m-zhao', '对')).toMatch(/已入账/);
     const beforeEntries = JSON.stringify((await w.snapshot()).entries);
     const again = await w.call('m-zhao', '李小雪：880');

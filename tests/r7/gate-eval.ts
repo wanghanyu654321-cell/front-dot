@@ -160,6 +160,8 @@ async function seedEntries(w: Awaited<ReturnType<typeof world>>, entries: NonNul
       ? `${e.customer}：${e.amount}（${owner.displayName}）`
       : `${e.customer}：${e.amount}（${reporter.displayName}）`;
     const r1 = await w.call(reporter.memberId, text);
+    // D165/D139：合成种子也遵循未知客户先回是、再回对；不绕过单闸。
+    if (isNewCustomerFirstAskReply(r1)) await w.call(reporter.memberId, '是');
     const r2 = await w.call(reporter.memberId, '对');
     const snap = await w.snapshot();
     const ok = snap.entries.some((row: { customerName: string | null; status: string }) => row.customerName === e.customer && row.status === 'confirmed');

@@ -31,7 +31,9 @@ describe('D133 归属与括号核对：一致或互补出草稿，冲突追问',
 
   it('「帮他报」配括号同事出草稿；「报我今天的」记给自己出草稿', async () => {
     const w = await worldM05();
-    const a = await w.call('m-zhao', '李小雪：760（小王）帮他报一下');
+    // D165/D139：未知全名先确认客户，归属语法仍照常核对。
+    expect(await w.call('m-zhao', '李小雪：760（小王）帮他报一下')).toContain('是新客户');
+    const a = await w.call('m-zhao', '是');
     expect(a).toMatch(/还没入账/);
     expect(a).not.toMatch(/行尾备注/);
     await w.call('m-zhao', '取消');
@@ -59,25 +61,23 @@ describe('D134 复合请求：报单＋本人进度两件都办；其它组合�
   });
 
 
-  it('报单＋明天的预约：出今天的草稿，不因后半句「明天」被拒；并说明预约没办', async () => {
+  // R18 / D157：复合句（报单＋预约、报单＋宣传）离线整句先问，不单独出报单草稿，也不登记预约；不因后半句「明天」被 D81 拒。
+  it('R18 / D157：报单＋明天的预约 → 整句先问、零写入，不回「只能报今天的单」', async () => {
     const w = await worldM05();
     const before = JSON.stringify(await w.snapshot());
     const r = await w.call('m-zhao', '钱姐：680（小赵）报我今天的，另外登记明天15点周老师护理预约');
-    expect(r).toMatch(/还没入账/);
-    expect(r).toMatch(/680/);
+    expect(r).not.toMatch(/还没入账|还没登记/);
     expect(r).not.toMatch(/只能报今天的单/);
-    expect(r).toMatch(/没有办|没办/);
-    expect(r).toMatch(/预约|明天/);
+    expect(r).toMatch(/没有写入/);
     expect(r).not.toMatch(/顾客 钱姐/);
+    expect(JSON.stringify(await w.snapshot())).toBe(before);
   });
-  it('报单后再写海报：出草稿，并明确说后半句没办及原因', async () => {
+  it('R18 / D157：报单后再写海报 → 整句先问、零草稿', async () => {
     const w = await worldM05();
     const r = await w.call('m-zhao', '钱姐：440（小王），另外帮做一张开业宣传海报');
-    expect(r).toMatch(/还没入账/);
-    expect(r).toMatch(/440/);
-    expect(r).toMatch(/没有办|没办/);
-    expect(r).toMatch(/海报/);
-    expect(r).toMatch(/一条消息只办一件|请单独再发|不办理/);
+    expect(r).not.toMatch(/还没入账/);
+    expect(r).toMatch(/没有写入/);
+    expect((await w.base.listDrafts({ status: 'pending' })).length).toBe(0);
   });
 });
 

@@ -3,6 +3,7 @@
  * 自编句子（李小雪、丽、王姐、美丽、王丽、周老师），不取留出集。
  */
 import { describe, expect, it } from 'vitest';
+import { seedHistoricalCustomers } from '../r13/historical-seed.js';
 import { worldM05 } from '../role-eval/appointment-fixture-m05.js';
 import { parseAppointmentRequest, askConfirmTodayReply } from '../../src/role-eval/appointments.js';
 
@@ -43,32 +44,38 @@ describe('D130 入口：白名单才出草稿，其余桩下追问零写入', ()
 });
 
 describe('D131 端到端：前缀命中与单字不误伤', () => {
-  it('已有「李小雪」时，「客户李小雪」和前缀加客户名进二选一，不直接出新草稿', async () => {
+  it('已有名字也不能放宽带前缀残片的客户位', async () => {
     const w = await worldM05();
     const first = await w.call('m-zhao', '李小雪：680（小赵）');
-    expect(first).toMatch(/还没入账/);
+    // D165/D139：括号未知客户也先确认名字，再确认入账。
+    expect(first).toContain('是新客户');
+    expect(await w.call('m-zhao', '是')).toMatch(/还没入账/);
     const conf = await w.call('m-zhao', '对');
     expect(conf).toMatch(/已入账/);
     const { entries } = await snapOf(w);
     expect(entries.some((e: { customerName?: string | null; status: string }) => e.customerName === '李小雪' && e.status === 'confirmed')).toBe(true);
 
     const again = await w.call('m-zhao', '客户李小雪：880（小赵）');
-    expect(again).toMatch(/今天已经有|已有/);
-    expect(again).toMatch(/李小雪/);
+    // D165/D147：残片客户位整条先问，不发可转为报单的选择草稿。
+    expect(again).toMatch(/没有写入/);
+    expect(await w.base.listDrafts({ status: 'pending' })).toHaveLength(0);
     expect(again).not.toMatch(/还没入账，回「对」/);
     await w.call('m-zhao', '取消');
 
     const prefix = await w.call('m-zhao', '这次是李小雪：990（小赵）');
-    expect(prefix).toMatch(/今天已经有|已有/);
-    expect(prefix).toMatch(/李小雪/);
+    // D165：表外前缀先问，即使包含已有客户名。
+    expect(prefix).toMatch(/没有写入/);
+    expect(await w.base.listDrafts({ status: 'pending' })).toHaveLength(0);
     expect(prefix).not.toMatch(/还没入账，回「对」/);
   });
 
   it('已有「丽」或「王姐」时，「美丽」「王丽」不触发二选一，各自出新草稿', async () => {
     const w = await worldM05();
     const a = await w.call('m-zhao', '丽：200（小赵）');
-    expect(a).toMatch(/还没入账/);
-    expect(await w.call('m-zhao', '对')).toMatch(/已入账/);
+    // D165/D147：单字残片不再因员工括号放宽；D131 的单字历史匹配改用合成历史账验证。
+    expect(a).not.toMatch(/还没入账/);
+    const owner = (await w.base.listPeople()).find(p => p.memberId === 'm-zhao')!;
+    await seedHistoricalCustomers(w.base, { storeId: owner.storeId, owner, names: ['丽', '美丽', '王丽'] });
     const b = await w.call('m-zhao', '王姐：880（小王）');
     expect(b).toMatch(/还没入账/);
     expect(await w.call('m-zhao', '对')).toMatch(/已入账/);

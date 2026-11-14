@@ -39,12 +39,16 @@ describe('R8 端到端：快通道、否定、非今天、小数、新增、预�
     expect(tail).not.toMatch(/金额不确定/);
   });
 
-  it('D125：报个数前缀 + 全角数字 + 行尾表情仍出草稿', async () => {
+  // D164/D165/D166：报数标签已收录，但紧贴客户没有分隔仍先问；全角数字与行尾表情照常收。
+  it('R18 / D158：紧贴前缀「报个数」先问零草稿；表内「报个单 」＋全角数字＋行尾表情出草稿', async () => {
     const w = await worldM05();
     const r = await w.call('m-zhao', '报个数钱姐６８０元😊');
-    expect(r).toMatch(/还没入账/);
-    expect(r).toMatch(/680/);
-    expect(r).not.toMatch(/金额不确定/);
+    expect(r).not.toMatch(/还没入账/);
+    expect((await w.base.listDrafts({ status: 'pending' })).length).toBe(0);
+    const ok = await w.call('m-zhao', '报个单 钱姐６８０元😊');
+    expect(ok).toMatch(/还没入账/);
+    expect(ok).toMatch(/680/);
+    expect(ok).not.toMatch(/金额不确定/);
   });
 
   it('D123：没做 / 退卡 追问零写入；不错 / 不用找 出草稿并带备注', async () => {
@@ -76,7 +80,8 @@ describe('R8 端到端：快通道、否定、非今天、小数、新增、预�
     expect(ok).not.toMatch(/只能报今天的单/);
     await w.call('m-zhao', '取消');
     const ok2 = await w.call('m-zhao', '今天的钱姐：880（小王）');
-    expect(ok2).toMatch(/还没入账/);
+    // D165/D139：剥完固定前缀仍含时间残片，不再宽松视为姓＋称谓。
+    expect(ok2).not.toMatch(/还没入账/);
     await w.call('m-zhao', '取消');
     const ok3 = await w.call('m-zhao', '不是补昨天，赵哥：690（小赵）');
     expect(ok3).toMatch(/还没入账/);

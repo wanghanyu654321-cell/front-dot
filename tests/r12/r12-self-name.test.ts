@@ -182,7 +182,9 @@ describe('D138 端到端：不带括号出草稿，员工=报单人', () => {
   it('D131：已确认「李小雪」后再发不带括号的「李小雪：880」进二选一，不出新草稿', async () => {
     const w = await worldM05();
     const first = await w.call('m-zhao', '李小雪：680（小赵）');
-    expect(first).toMatch(/还没入账/);
+    // D165/D139：括号未知客户也先确认名字，再确认入账。
+    expect(first).toContain('是新客户');
+    expect(await w.call('m-zhao', '是')).toMatch(/还没入账/);
     expect(await w.call('m-zhao', '对')).toMatch(/已入账/);
     const beforeEntries = JSON.stringify((await w.snapshot()).entries);
     const again = await w.call('m-zhao', '李小雪：880');
