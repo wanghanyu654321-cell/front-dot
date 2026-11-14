@@ -1,7 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS } from '../helpers/pg-cluster.js';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Client } from 'pg';
 import { FRONT_CLAW_DATABASE_URL, openPerformanceStore } from '../../src/role-eval/performance-open.js';
@@ -15,39 +12,12 @@ import { fakeHost, manualClock, offlineChannels, opIdOf, seedWorld } from './fix
 
 // M07 真实 PostgreSQL 临时集群（自建自删，随机端口，不连常驻库）。FRONT_CLAW_PG_BIN 可覆盖；
 // 本机实测用 PG17 用户态程序 —— 不是线上版本。全部合成数据。
-const bin = process.env.FRONT_CLAW_PG_BIN?.trim() || '/usr/lib/postgresql/16/bin';
-async function listenPort(): Promise<number> {
-  const { createServer } = await import('node:net');
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, '127.0.0.1', () => { const a = server.address(); const port = a && typeof a === 'object' ? a.port : 0; server.close(() => resolve(port)); });
-    server.on('error', reject);
-  });
-}
-async function run(command: string, args: string[]) {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(Error(`${command} exited ${code}`)));
-  });
-}
 let cluster: { base: string; stop(): Promise<void> };
 let dbSeq = 0;
 beforeAll(async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'front-claw-pg-m07-'));
-  const port = await listenPort();
-  await run(`${bin}/initdb`, ['-D', directory, '-U', 'frontclaw', '--auth=trust', '--no-sync', '--encoding=UTF8']);
-  const child: ChildProcess = spawn(`${bin}/postgres`, ['-D', directory, '-p', String(port), '-h', '127.0.0.1', '-k', directory, '-c', 'listen_addresses=127.0.0.1'], { stdio: 'ignore' });
-  const base = `postgres://frontclaw@127.0.0.1:${port}`;
-  const started = Date.now();
-  for (;;) {
-    const client = new Client({ connectionString: `${base}/postgres` });
-    try { await client.connect(); await client.end(); break; }
-    catch { if (Date.now() - started > 20_000) { child.kill('SIGTERM'); throw Error('postgres_not_ready'); } await new Promise(r => setTimeout(r, 200)); }
-  }
-  cluster = { base, async stop() { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); await rm(directory, { recursive: true, force: true }); } };
-}, 40_000);
-afterAll(async () => { await cluster?.stop(); });
+  cluster = await startPgCluster();
+}, PG_START_HOOK_TIMEOUT_MS);
+afterAll(async () => { await cluster?.stop(); }, PG_STOP_HOOK_TIMEOUT_MS);
 
 async function freshDatabase(): Promise<string> {
   const name = `m07_case_${++dbSeq}`;
