@@ -26,7 +26,7 @@ Front Claw（美业门店企微助手）迁入 OpenDot 的工程仓库：复用�
 | `migrations/` | PG 表结构迁移（007–011，含 down），见 `migrations/README-m08.md` |
 | `config/` | 产品配置：客户名策略、备注白名单、客套语、固定否定补报说法 |
 | `integrations/opendot-front-claw/` | OpenDot 侧挂点补丁与说明 |
-| `integrations/native/` | 原 Native 宿主、受控容器边界等底座（历史资产，node:test） |
+| `integrations/native/` | 原 Native 宿主、受控容器边界等底座（历史资产；node:test 用例已归档到 `archived-tests/`，不维护） |
 | `tests/` | Vitest 单元测试与 PG 集成测试（按里程碑 / 修复轮分目录） |
 | `scripts/eval-gates.sh` | 门禁评测脚本（喂入任意同格式 jsonl 语料） |
 | `docs/architecture/` | 架构 |
