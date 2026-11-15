@@ -1,8 +1,6 @@
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS } from '../helpers/pg-cluster.js';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Client } from 'pg';
 import { WORKBENCH_ROLES, type WorkbenchRole } from '../../src/role-eval/workbench-access.js';
@@ -15,65 +13,9 @@ import { createWecomBotHandler } from '../../src/role-eval/wecom-bot-unified-han
 
 const roles = [...WORKBENCH_ROLES] as WorkbenchRole[];
 // M02: 可用 FRONT_CLAW_PG_BIN 覆盖服务端程序目录；默认值不变。测试仍自建自删临时集群。
-const bin = process.env.FRONT_CLAW_PG_BIN?.trim() || '/usr/lib/postgresql/16/bin';
 
 function person(fields: Pick<Person, 'personId' | 'accountId' | 'memberId' | 'displayName' | 'tier'>): Person {
   return { ...fields, storeId: 'store-ming', storeName: '明川店', roles, active: true };
-}
-
-function listenPort(): Promise<number> {
-  return import('node:net').then(({ createServer }) => new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = address && typeof address === 'object' ? address.port : 0;
-      server.close(() => resolve(port));
-    });
-    server.on('error', reject);
-  }));
-}
-
-async function run(command: string, args: string[]): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(Error(`${command} exited ${code}`)));
-  });
-}
-
-async function startCluster(): Promise<{ url: string; stop(): Promise<void> }> {
-  const directory = await mkdtemp(join(tmpdir(), 'front-claw-pg-'));
-  const port = await listenPort();
-  await run(`${bin}/initdb`, ['-D', directory, '-U', 'frontclaw', '--auth=trust', '--no-sync', '--encoding=UTF8']);
-  const child: ChildProcess = spawn(`${bin}/postgres`, [
-    '-D', directory, '-p', String(port), '-h', '127.0.0.1', '-k', directory, '-c', 'listen_addresses=127.0.0.1',
-  ], { stdio: 'ignore' });
-  const url = `postgres://frontclaw@127.0.0.1:${port}/postgres`;
-  const started = Date.now();
-  let ready = false;
-  while (Date.now() - started < 20_000) {
-    const client = new Client({ connectionString: url });
-    try {
-      await client.connect();
-      await client.end();
-      ready = true;
-      break;
-    } catch {
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-  }
-  if (!ready) {
-    child.kill('SIGTERM');
-    throw Error('postgres_not_ready');
-  }
-  return {
-    url,
-    async stop() {
-      child.kill('SIGTERM');
-      await new Promise(resolve => child.once('exit', resolve));
-      await rm(directory, { recursive: true, force: true });
-    },
-  };
 }
 
 function bind(store: PerformanceStore, now: () => Date) {
@@ -96,18 +38,18 @@ async function open(url: string): Promise<OpenedPerformanceStore> {
 let cluster: { url: string; stop(): Promise<void> };
 
 beforeAll(async () => {
-  cluster = await startCluster();
+  cluster = await startPgCluster();
   await applyLatest(cluster.url);
   const client = new Client({ connectionString: cluster.url });
   await client.connect();
   await client.query('CREATE TABLE public.appointments (id integer PRIMARY KEY, note text NOT NULL)');
   await client.query(`INSERT INTO public.appointments VALUES (1, 'existing')`);
   await client.end();
-}, 30_000);
+}, PG_START_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await cluster?.stop();
-}, 40_000);
+}, PG_STOP_HOOK_TIMEOUT_MS);
 
 it('lets only one Postgres claim move a pending draft to confirming', async () => {
   const opened = await open(cluster.url);

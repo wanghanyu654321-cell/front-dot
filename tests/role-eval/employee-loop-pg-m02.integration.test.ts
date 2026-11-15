@@ -1,8 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { appendFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS } from '../helpers/pg-cluster.js';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Client } from 'pg';
 import type { Person } from '../../src/role-eval/performance-store.js';
@@ -13,45 +10,18 @@ import { createWecomBotHandler } from '../../src/role-eval/wecom-bot-unified-han
 
 // 真实 PostgreSQL 临时集群（自建自删，随机端口，不连常驻库）。程序目录同 performance-postgres.integration.test.ts：
 // FRONT_CLAW_PG_BIN 可覆盖，默认 /usr/lib/postgresql/16/bin。本机实测用 PG17 用户态程序，非线上版本。
-const bin = process.env.FRONT_CLAW_PG_BIN?.trim() || '/usr/lib/postgresql/16/bin';
 const people: Person[] = [
   { personId: 'p-wang-yj', accountId: 'a-wang-yj', memberId: 'm-wang-yj', displayName: '苏晓禾', storeId: 's-b', storeName: '测试B店', tier: 'employee', roles: [], active: true },
   { personId: 'p-zhao', accountId: 'a-zhao', memberId: 'm-zhao', displayName: '小赵', storeId: 's-b', storeName: '测试B店', tier: 'employee', roles: [], active: true },
   { personId: 'p-lin', accountId: 'a-lin', memberId: 'm-lin', displayName: '小林', storeId: 's-a', storeName: '测试A店', tier: 'employee', roles: [], active: true },
 ];
 
-async function listenPort(): Promise<number> {
-  const { createServer } = await import('node:net');
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, '127.0.0.1', () => { const a = server.address(); const port = a && typeof a === 'object' ? a.port : 0; server.close(() => resolve(port)); });
-    server.on('error', reject);
-  });
-}
-async function run(command: string, args: string[]) {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(Error(`${command} exited ${code}`)));
-  });
-}
 let cluster: { base: string; stop(): Promise<void> };
 let dbSeq = 0;
 beforeAll(async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'front-claw-pg-m02-'));
-  const port = await listenPort();
-  await run(`${bin}/initdb`, ['-D', directory, '-U', 'frontclaw', '--auth=trust', '--no-sync', '--encoding=UTF8']);
-  const child: ChildProcess = spawn(`${bin}/postgres`, ['-D', directory, '-p', String(port), '-h', '127.0.0.1', '-k', directory, '-c', 'listen_addresses=127.0.0.1'], { stdio: 'ignore' });
-  const base = `postgres://frontclaw@127.0.0.1:${port}`;
-  const started = Date.now();
-  for (;;) {
-    const client = new Client({ connectionString: `${base}/postgres` });
-    try { await client.connect(); await client.end(); break; }
-    catch { if (Date.now() - started > 20_000) { child.kill('SIGTERM'); throw Error('postgres_not_ready'); } await new Promise(r => setTimeout(r, 200)); }
-  }
-  cluster = { base, async stop() { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); await rm(directory, { recursive: true, force: true }); } };
-}, 40_000);
-afterAll(async () => { await cluster?.stop(); });
+  cluster = await startPgCluster();
+}, PG_START_HOOK_TIMEOUT_MS);
+afterAll(async () => { await cluster?.stop(); }, PG_STOP_HOOK_TIMEOUT_MS);
 
 /** 每个用例一个新库，互不影响。 */
 async function freshDatabase(): Promise<string> {
