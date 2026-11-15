@@ -25,9 +25,12 @@ export const ASSISTANT_TOOL_NAMES = [
   'my_progress',
   'unreported',
   'stores_ranking',
-  'set_target',
   'submit_appointment',
-  'confirm_appointment',
 ] as const;
 
 export type AssistantToolName = typeof ASSISTANT_TOOL_NAMES[number];
+
+/** Model-visible operations can query or stage a draft, never commit business facts. */
+export const MODEL_TOOL_NAMES = Object.freeze([
+  'report_numbers', 'get_summary', 'my_progress', 'unreported', 'stores_ranking', 'submit_appointment',
+] as const satisfies readonly AssistantToolName[]);

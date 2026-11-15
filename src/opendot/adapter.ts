@@ -8,8 +8,11 @@ import type { OpenedPerformanceStore } from '../role-eval/performance-open.js';
 import { UNBOUND, type SendResult } from '../role-eval/wecom-bot-unified-handler.js';
 import { createConsumerLease, type ConsumerLease } from './consumer-lease.js';
 import { fenceHolds, parseLeaseRecord, type Fence } from '../role-eval/fencing.js';
-import { loadOperationRecord, saveOperationRecord, type OperationRecord } from '../role-eval/operation-records.js';
+import { loadOperationRecord, parseOperationRecord, OPERATION_RECORD_PREFIX, saveOperationRecord, type OperationRecord } from '../role-eval/operation-records.js';
 import { consumerWrites } from '../role-eval/consumer-writes.js';
+import type { ModelClassifier } from '../role-eval/model-classify.js';
+import { stubModelClassifier } from '../role-eval/model-classify.js';
+import type { MessageObservation } from '../role-eval/employee-entry.js';
 import {
   FRONT_CLAW_OPERATION_PREFIX, OPENDOT_ADAPTER_FLAG, OPENDOT_PLATFORM_CAPABILITIES,
   type OpenDotHost, type OpenDotHostService,
@@ -31,11 +34,14 @@ export interface FrontClawOpenDotService extends OpenDotHostService {
   cancel(operationId: string): Promise<OperationReport>;
   /** 一轮：抢/续租约，按结果开/停入站，通道掉线超时重建。生产由定时器驱动。 */
   tick(): Promise<void>;
-  idle(): Promise<void>;
+  idle(operationId?: string): Promise<void>;
   stats(): AdapterStats;
   readonly owner: string;
 }
 export interface AdapterDeps {
+  /** Optional extraction port; captured at startup, never given a store or write tools. */
+  modelClassify?: ModelClassifier;
+  modelClassifyTimeoutMs?: number;
   /** 通道工厂；缺省为生产企微长连接（假设 A2，凭据 env）。每次拿到租约新建一个。 */
   channel?: () => FrontClawChannel;
   /** 测试：注入已打开的存储（内存 SQL 替身）；缺省按 env 打开 PG。 */
@@ -84,6 +90,7 @@ interface Op { id: string; messageId: string; state: OperationState; controller:
  * 适配器不直接写账本：每条消息都经 handler.handleMessage，由 M03 在每一步按最新策略重判（平台层只能收窄）。
  */
 export async function startFrontClawOpenDotService(host: OpenDotHost, deps: AdapterDeps = {}): Promise<FrontClawOpenDotService> {
+  deps = { ...deps };
   const env = host.env;
   if (env[OPENDOT_ADAPTER_FLAG]?.trim() !== '1') {
     host.logger.info({ state: 'disabled' }, 'Front Claw adapter disabled');
@@ -105,6 +112,8 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
   const traces = new Map<string, { operationId?: string; ledgerSettled: boolean }>();
   const ops = new Map<string, Op>();
   const inflight = new Map<string, Promise<void>>();
+  const employeeQueues = new Map<string, Promise<void>>();
+  const observations = new Map<string, MessageObservation>();
   const remember = (op: Op) => { ops.set(op.id, op); while (ops.size > 5000) { const first = ops.keys().next().value!; if (inflight.has(first)) break; ops.delete(first); } };
   let lease: ConsumerLease | undefined;
   const leaseHeld = () => lease?.held() === true;
@@ -119,7 +128,7 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
     const record: OperationRecord = { state: op.state as OperationRecord['state'], messageId: op.messageId, ledgerSettled: op.ledgerSettled === true || trace?.ledgerSettled === true,
       ...(trace?.operationId ? { businessOperationId: trace.operationId } : {}), ...(op.replyState ? { replyState: op.replyState } : {}) };
     // R3（A-P1-1）：操作记录也带 epoch 写；被接管后的旧持有者写不进（拒绝即放弃，不重试）。
-    await saveOperationRecord(consumerWrites(boot.store, op.fence, () => now().getTime()), op.id, record).catch(() => {});
+    await saveOperationRecord(consumerWrites(boot.store, op.fence, () => now().getTime()), op.id, record);
   };
 
   const send = async ({ toPersonId, text }: { toPersonId: string; text: string }): Promise<SendResult> => {
@@ -139,6 +148,8 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
     ...(deps.maintenanceIntervalMs ? { maintenanceIntervalMs: deps.maintenanceIntervalMs } : {}),
     // 与现有 pilot 相同：模型端口只回固定闲聊（OpenDot 模型配置复用未做，见报告）。
     model: { complete: async () => ({ type: 'chat', text: 'Front Claw 在。' }) },
+    router: { modelClassify: deps.modelClassify ?? stubModelClassifier, modelClassifyTimeoutMs: deps.modelClassifyTimeoutMs ?? 8000,
+      onObservation: ({ requestId, ...record }) => { observations.set(requestId, record); } },
     onEmployeeTrace: trace => {
       traces.set(trace.messageId, { ...(trace.operationId ? { operationId: trace.operationId } : {}), ledgerSettled: trace.ledgerSettled });
       while (traces.size > 5000) traces.delete(traces.keys().next().value!);
@@ -164,29 +175,66 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
   }
 
   function receive(event: InboundText): void {
+    event = Object.freeze(structuredClone(event));
     const pendingArrival = boot.handler.employeeLoop ? capturePendingArrival(boot.store) : undefined;
     void pendingArrival?.catch(() => {});
+    let pendingSequence: string | null = null;
+    void pendingArrival?.then(value => { pendingSequence = value.sequence; }, () => {});
     const arrivedAt = event.createTime === undefined ? undefined : new Date(event.createTime * 1000).toISOString();
     const id = operationIdFor(event);
-    if (closing) { stats.droppedClosing++; return; }
+    const deadline = performance.now() + requestTimeoutMs;
+    const logInbound = async (reason?: string) => {
+      const observation = reason ? undefined : observations.get(event.messageId);
+      if (!reason) observations.delete(event.messageId);
+      try { host.logger.info({ event: 'inbound_message', operationId: id,
+        route: observation?.route ?? '追问', gateReason: reason ?? observation?.gateReason ?? 'not_applicable',
+        pendingSequence, modelMs: observation?.modelMs ?? 0,
+        errorCategory: observation?.errorCategory ?? (reason === 'failed' ? 'processing_error' : reason === 'timeout' || reason === 'cancelled' ? reason : 'none') }); } catch { /* Logs cannot change business results. */ }
+    };
+    if (closing) { stats.droppedClosing++; void logInbound('closing'); return; }
     // 旧消费者（租约本地已过期）不做任何业务写入，也不回复。
-    if (!leaseHeld()) { stats.droppedStale++; return; }
-    if (inflight.has(id)) { stats.duplicate++; return; }
+    if (!leaseHeld()) { stats.droppedStale++; void logInbound('stale_consumer'); return; }
+    if (inflight.has(id)) { stats.duplicate++; void logInbound('duplicate'); return; }
     const fence = lease?.fence() ?? undefined;
     const op: Op = { id, messageId: event.messageId, state: 'running', controller: new AbortController(), ...(fence ? { fence } : {}) };
+    const read = <T>(reading: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+      const stop = () => { op.state = performance.now() >= deadline ? 'timeout' : 'cancelled'; done(); reject(Error('read_budget_exhausted')); };
+      const timer = setTimeout(stop, Math.max(0, deadline - performance.now()));
+      const done = () => { clearTimeout(timer); op.controller.signal.removeEventListener('abort', stop); };
+      reading.then(value => { done(); resolve(value); }, error => { done(); reject(error); });
+      if (op.controller.signal.aborted || performance.now() >= deadline) { stop(); return; }
+      op.controller.signal.addEventListener('abort', stop, { once: true });
+    });
     remember(op);
-    const run = (async () => {
+    const queueKey = sha([event.botId, event.corpId, event.memberId]);
+    const previous = employeeQueues.get(queueKey) ?? Promise.resolve();
+    let duplicate = false;
+    const run = previous.catch(() => {}).then(async () => {
       // R1（M07-01）：处理前按 PG 租约行核对 fencing（本地时钟偏差时 leaseHeld 可能误判）；不成立 → 不做任何业务处理、不回复。
-      if (!await fenceStillHolds(op.fence)) { stats.droppedStale++; op.state = 'cancelled'; return; }
+      if (!await read(fenceStillHolds(op.fence))) { stats.droppedStale++; op.state = 'cancelled'; return; }
+      const raw = await read(boot.store.getConfig(OPERATION_RECORD_PREFIX + id));
+      const saved = parseOperationRecord(raw);
+      if (raw !== null && !saved) throw Error('invalid_operation_record');
+      // A fenced consumer may finish a known claimed confirmation; never rerun extraction or an unknown send.
+      const actor = saved?.state === 'running' && event.text.trim() === '对' ? await read(boot.store.getPersonByMember(event.memberId)) : null;
+      const resumable = actor && (await read(boot.store.listDrafts({ reporterPersonId: actor.personId, storeId: actor.storeId, status: 'confirming' })))
+        .some(draft => draft.kind === 'report' && draft.payload.type === 'report' && draft.payload.employeeContext?.memberId === event.memberId && draft.payload.employeeContext.actionMessageId === event.messageId);
+      if (saved && !resumable) {
+        duplicate = true; stats.duplicate++;
+        op.state = saved.state === 'running' ? 'interrupted' : saved.state;
+        op.ledgerSettled = saved.ledgerSettled;
+        if (saved.replyState) op.replyState = saved.replyState;
+        return;
+      }
       op.persisted = true; await saveOp(op);
       let replies: readonly string[];
-      const binding = await bindingFor(event);
+      const binding = await read(bindingFor(event));
       if (!binding) { stats.unbound++; replies = [UNBOUND]; op.state = 'completed'; }
       else {
         const result = await boot.handler.handleMessage({
           memberId: event.memberId, text: event.text, messageId: event.messageId, arrivedAt, pendingArrival,
           sessionId: sha(['opendot', binding.corpId, event.botId, event.memberId, binding.accountId]),
-          bindingVersion: binding.version, signal: op.controller.signal, deadline: performance.now() + requestTimeoutMs,
+          bindingVersion: binding.version, signal: op.controller.signal, deadline,
           ...(op.fence ? { fence: op.fence } : {}),
         });
         op.state = result.state ?? 'completed';
@@ -198,8 +246,14 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
       // R1（M07-01）：被接管/租约过期的旧持有者不回复（结果按 fencing 已被拒绝或由新持有者负责）。
       if (replies.length && target && await fenceStillHolds(op.fence)) op.replyState = await target.reply(event, replies.join('\n\n'), { signal: AbortSignal.timeout(4_000), deadline: performance.now() + 4_000 });
       else if (replies.length) stats.droppedStale++;
-    })().catch(() => { if (op.state === 'running') op.state = 'failed'; }).finally(async () => { if (op.persisted) await saveOp(op); inflight.delete(id); });
+    }).catch(() => { if (op.state === 'running') op.state = 'failed'; }).finally(async () => {
+      if (op.persisted) await saveOp(op).catch(() => {});
+      await logInbound(duplicate ? 'duplicate' : op.state === 'failed' || op.state === 'timeout' || op.state === 'cancelled' ? op.state : undefined);
+      inflight.delete(id);
+      if (employeeQueues.get(queueKey) === run) employeeQueues.delete(queueKey);
+    });
     inflight.set(id, run);
+    employeeQueues.set(queueKey, run);
   }
 
   async function report(id: string): Promise<OperationReport> {
@@ -297,7 +351,10 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
       return report(id);
     },
     tick,
-    async idle() { while (inflight.size) await Promise.allSettled([...inflight.values()]); },
+    async idle(operationId) {
+      if (operationId) { await inflight.get(operationId); return; }
+      while (inflight.size) await Promise.allSettled([...inflight.values()]);
+    },
     stats: () => ({ ...stats, rejectedFrames: stats.rejectedFrames + (channel?.rejected() ?? 0) }),
     close() {
       return closingPromise ??= (async () => {

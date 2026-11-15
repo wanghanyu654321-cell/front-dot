@@ -21,6 +21,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: Model entry boundary and deployment contracts
+        run: npx vitest run tests/e2e tests/deploy
       # 单元测试；live-model-smoke 依赖真实模型宿主环境，CI 跳过。不需要任何密钥。
       - run: npm run test:ci
 
@@ -64,6 +66,7 @@ jobs:
           "$FRONT_CLAW_PG_BIN/postgres" --version
           "$FRONT_CLAW_PG_BIN/initdb" --version | grep -E ' 17\.'
       - run: npm ci
+      - run: npm run build
       - name: Start disposable audit PG cluster
         # 给 tests/audit/* 用的一次性合成集群：默认非 root 用户 initdb，数据在 $RUNNER_TEMP，
         # 只监听 127.0.0.1，pg_hba 只有一行 127.0.0.1/32 trust（unix socket 没有放行规则）。
@@ -80,12 +83,12 @@ jobs:
           echo "AUDIT_PG_URL=postgres://frontclaw@127.0.0.1:$AUDIT_PG_PORT/postgres" >> "$GITHUB_ENV"
       - name: PG integration tests (full suite)
         run: npm run test:pg
-      - name: Concurrent confirm test x5 (employee-loop-pg-m02)
-        # D151/D160：并发重复回「对」只入账一笔、只回一次「已入账」。单独循环 5 次，任何一次失败即失败。
+      - name: Concurrent employee confirmation repeated five times
+        # 并发重复回「对」只入账一笔、只回一次「已入账」。单独循环五次，任何一次失败即失败。
         run: |
           set -euo pipefail
           for i in 1 2 3 4 5; do
-            echo "::group::employee-loop-pg-m02 run $i/5"
+            echo "::group::employee confirmation run $i/5"
             npm run test:pg -- tests/role-eval/employee-loop-pg-m02.integration.test.ts
             echo "::endgroup::"
           done

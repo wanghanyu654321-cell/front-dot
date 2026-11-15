@@ -18,9 +18,9 @@ import {
   businessDate, DEFAULT_BUSINESS_CUTOFF, DEFAULT_TIME_ZONE, monthKey, REMINDER_DELAY_MS, shiftMonth, zonedDateTime,
 } from './metrics.js';
 import { customerAmount, formatDay, scrubReply } from './reply.js';
-import { FRONT_CLAW, skillsFor, type AssistantSkill, type AssistantToolName } from './assistant-skills.js';
+import { FRONT_CLAW, skillsFor, MODEL_TOOL_NAMES, type AssistantSkill, type AssistantToolName } from './assistant-skills.js';
 import { distinctStores, createAssistantTools } from './assistant-tools.js';
-import { isClosedCommand, matchExactTool, parseTargetUtterance, validateTargetFields } from './assistant-commands.js';
+import { isClosedCommand, matchExactTool, parseTargetUtterance } from './assistant-commands.js';
 
 export interface ModelInput {
   assistant: 'Front Claw';
@@ -109,9 +109,9 @@ function draftCommand(text: string): DraftCommand | null {
 function toolsFor(tier: Person['tier']): AssistantToolName[] {
   const employee: AssistantToolName[] = ['report_numbers', 'my_progress', 'submit_appointment'];
   if (tier === 'employee') return employee;
-  const manager: AssistantToolName[] = [...employee, 'get_summary', 'unreported', 'set_target', 'confirm_appointment'];
+  const manager: AssistantToolName[] = [...employee, 'get_summary', 'unreported'];
   if (tier === 'manager') return manager;
-  return [...manager, 'stores_ranking'];
+  return [...manager, 'stores_ranking'].filter(name => (MODEL_TOOL_NAMES as readonly string[]).includes(name)) as AssistantToolName[];
 }
 
 function proposedKey(item: ReportDraftItem): string {
@@ -758,21 +758,10 @@ export function createWecomBotHandler(options: WecomBotHandlerOptions) {
     if (output.name === 'unreported') return (await tools.unreported(current.accountId)).reply;
     if (output.name === 'stores_ranking') return (await tools.storesRanking(current.accountId)).reply;
     if (output.name === 'get_summary') return (await tools.getSummary(current.accountId)).reply;
-    if (output.name === 'set_target') {
-      const parsed = validateTargetFields(output.fields);
-      if (!parsed.ok) return `${FRONT_CLAW}：目标没说清，请说员工和金额。我不会猜。`;
-      const periodMonth = parsed.periodMonth ?? monthKey(businessDay());
-      return (await tools.setTarget(current.accountId, { personName: parsed.personName, amount: parsed.amount, periodMonth })).reply;
-    }
     if (output.name === 'submit_appointment') {
       const parsed = validateAppointmentFields(output.fields);
       if (!parsed.ok) return `${FRONT_CLAW}：预约没说清，请补顾客和时间。我不会猜。`;
       return stageAppointment(current.accountId, parsed.item);
-    }
-    if (output.name === 'confirm_appointment') {
-      const index = output.fields.index;
-      if (Object.keys(output.fields).some(key => key !== 'index') || typeof index !== 'number' || !Number.isInteger(index)) return `${FRONT_CLAW}：要确认哪一笔？回复「确认预约 1」。`;
-      return managerConfirm(current, { index });
     }
     return `${FRONT_CLAW}：这个我不能办。`;
   }
