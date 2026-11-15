@@ -37,10 +37,12 @@ import { isYesNewCustomerReply, newCustomerAskKey, newCustomerAskReply, notCusto
 import { customerNameConflicts } from './customer-conflict.js';
 import { advancePendingSlot, pendingConfirmationReminder, pendingExpired, reportLabels, type SavedNewCustomerAsk, type PendingReportAdmission } from './pending-slot.js';
 import { validateModelChain, isReadOnlyQuery, type ModelClassification } from './model-classify.js';
+import { modelReportCandidate } from './model-report-candidate.js';
 
 
 export const EMPLOYEE_LOOP_CONFIG = 'employee-loop:m01';
 export interface EmployeeMessage {
+  onGate?: (reason: string) => void;
   memberId: string; text: string;
   /** 可信入口最早接收时刻；不能取排队后的处理时刻。 */
   arrivedAt?: string | undefined;
@@ -967,7 +969,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       if (!valid(input.messageId) || !valid(input.sessionId) || !Number.isSafeInteger(input.bindingVersion) || input.bindingVersion! < 1) return DENIED;
       const actor = await actorFor(input.memberId);
       if (!actor) return DENIED;
-      const text = input.text.trim();
+      let text = input.text.trim();
       // M03 入口鉴权：策略缺失、损坏、无授权、停用或角色不符时，在任何业务读写前拒绝。
       if (policyMode && !standing(await readPolicy(store), actor).allowed) return ACCESS_DENIED;
       // D179 统一过期收尾：先生成本请求私有快照并关闭过期项，所有正常分支共用；
@@ -1344,6 +1346,14 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         return done.reply;
       }
       const today = businessDate(now(), cutoff, timeZone);
+      if (input.modelClassification?.intent === 'report') {
+        const candidate = modelReportCandidate(text, input.modelClassification, actor, today);
+        if (!candidate) {
+          input.onGate?.('model_candidate_rejected');
+          return askReply(REPORT_HINT);
+        }
+        text = candidate;
+      }
       // R8：标准行先走同一份语法（D125）。否定/小额小数追问（D122/D123），非今天拒（D124）。
       const std = tryStandardReport(text, today);
       const modelAsk = async () => askReply(formatMaybeReportAsk(text, await collectConfirmedLedgerNames(store, actor.storeId)));
@@ -1603,6 +1613,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
         ...aliases.filter(a => a.storeId === actor.storeId).map(a => a.alias),
       ]);
       const gate = evaluateConfirmableReportDraft({ text, today, employeeNames: gateEmployeeNames, liveModelAllowsDraft: false, entries: gateEntriesFor(), source: parsedSource, knownCustomerNames: await collectKnownCustomerNames(store, actor.storeId) });
+      input.onGate?.(gate.ok ? 'accepted' : gate.reason);
       // R6 数据兜底 + D131 包含匹配宁可多触发：已有客户名出现在这一行里就进二选一。
       const todayConfirmed = (await store.listEntries({ storeId: actor.storeId, businessDay: report.businessDay, status: 'confirmed' }))
         .filter(row => row.status === 'confirmed' && row.storeId === actor.storeId && row.businessDay === report.businessDay);

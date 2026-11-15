@@ -32,6 +32,7 @@ export interface MarketingPort {
   handle(input: { memberId: string; text: string; signal: AbortSignal; deadline: number }): Promise<string>;
 }
 export interface EmployeeRouterOptions {
+  onObservation?: (record: MessageObservation & { requestId: string }) => void;
   /** 每请求统一截止时间，默认 15 秒。 */
   budgetMs?: number;
   /** 可选受限语义分类，默认不装配（=规则+澄清）。 */
@@ -48,6 +49,9 @@ export interface EmployeeRouterOptions {
   modelClassifyTimeoutMs?: number;
   marketing?: MarketingPort;
   onRoute?: (record: RouteLogRecord) => void;
+}
+export interface MessageObservation {
+  route: '快通道' | '模型' | '追问'; gateReason: string; pendingSequence: string | null; modelMs: number; errorCategory: string;
 }
 export interface RoutedHandleResult extends HandleResult {
   requestId: string; state: TerminalState; target: RouteDecision['target']; duplicate: boolean;
@@ -66,8 +70,8 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
  */
 export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?: EmployeeRouterOptions },
   loop: (input: EmployeeMessage, preflightReply?: PreflightReply) => Promise<EmployeeLoopResult>) {
-  const router = options.router ?? {};
-  const modelRuntime = loadModelRuntimeConfig(router.modelConfig);
+  const router = { ...options.router };
+  const modelRuntime = router.modelClassify ? { mode: 'stub' as const, timeoutMs: 8000 } : loadModelRuntimeConfig(router.modelConfig);
   const modelClassifier = router.modelClassify ?? createModelClassifier(modelRuntime);
   const modelClassifyTimeoutMs = router.modelClassifyTimeoutMs ?? modelRuntime.timeoutMs;
   const budget = createRequestBudget({
@@ -122,12 +126,16 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
   return async (input: EmployeeMessage): Promise<RoutedHandleResult> => {
     const pendingArrival = input.pendingArrival ?? capturePendingArrival(options.store);
     void pendingArrival.catch(() => {});
+    let pendingSequence: string | null = null;
+    void pendingArrival.then(value => { pendingSequence = value.sequence; }, () => {});
     input = { ...input, pendingArrival };
     const requestId = typeof input.messageId === 'string' && input.messageId.trim() ? input.messageId : `anonymous-${++anonymous}`;
     const fingerprint = hash([input.memberId, input.sessionId ?? null, input.bindingVersion ?? null, input.text]);
     log.inbound(requestId);
     let decision: RouteDecision = { target: 'clarify', label: 'clarify', intents: [] };
     let modelCalled = false;
+    let gateReason = 'not_applicable', modelMs = 0, errorCategory = 'none', modelAttempted = false;
+    input = { ...input, onGate: reason => { gateReason = reason.split(':')[0]!; } };
     const run = await budget.run(requestId, fingerprint, { signal: input.signal, deadline: input.deadline }, async child => {
       await pendingArrival;
       if (child.signal.aborted || performance.now() >= child.deadline) throw Error('arrival_cancelled');
@@ -197,11 +205,15 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
       let modelClassification: ModelClassification | undefined;
       if (decision.target === 'clarify') {
         const classifier = modelClassifier;
-        const output = await runModelClassifier(input.text, classifier, child.signal, child.deadline, modelClassifyTimeoutMs);
+        modelAttempted = true;
+        const output = await runModelClassifier(input.text, classifier, child.signal, child.deadline, modelClassifyTimeoutMs, diagnostic => {
+          modelMs = diagnostic.modelMs; errorCategory = diagnostic.errorCategory;
+        });
         if (!isModelStub(classifier)) modelCalled = true;
         const chain = validateModelChain({ text: input.text, output });
         if (!chain.ok) {
-          // 门②：金额不安全立刻追问，不执行。拿不准/schema 走默认澄清。
+          gateReason = chain.reason;
+          if (errorCategory === 'none') errorCategory = chain.reason;
           if (chain.reason === 'amount') return preflightResponse(chain.ask, 'ask');
         } else {
           modelClassification = chain.classification;
@@ -261,6 +273,8 @@ export function createEmployeeEntry(options: WecomBotHandlerOptions & { router?:
     log.deliver(requestId, { delivered: deliver, duplicate, state: terminal.state });
     // 投递与业务分开：投递失败不回滚已提交业务，异常照常抛给调用方。
     if (deliver) options.onOutbound?.(terminal.reply);
+    try { router.onObservation?.({ requestId, route: gateReason !== 'accepted' && (modelAttempted || decision.target === 'clarify') ? '追问' : modelAttempted ? '模型' : '快通道',
+      gateReason, pendingSequence, modelMs, errorCategory }); } catch { /* No content is logged. */ }
     return { entry: 'unified', replies: [terminal.reply], modelCalled, ...(terminal.ledgerSettled ? { ledgerSettled: true } : {}),
       requestId, state: terminal.state, target: decision.target, duplicate };
   };

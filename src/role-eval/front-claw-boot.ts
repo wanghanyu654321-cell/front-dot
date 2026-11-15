@@ -59,6 +59,7 @@ export async function bootFrontClaw(options: {
   /** M03：访问策略模式，必须与 employeeLoop 同开；开启后人员 tier 只来自目录，SDK 角色不再写回人员档案。 */
   accessPolicy?: boolean;
   onEmployeeTrace?: WecomBotHandlerOptions['onEmployeeTrace'];
+  router?: WecomBotHandlerOptions['router'];
   /** R3a（D99）：旧入口开关，默认关闭；仅 employeeLoop 未开时有意义。 */
   legacyEntry?: WecomBotHandlerOptions['legacyEntry'];
   onLegacyWarn?: WecomBotHandlerOptions['onLegacyWarn'];
@@ -86,6 +87,7 @@ export async function bootFrontClaw(options: {
       employeeLoop,
       ...(accessPolicy ? { accessPolicy: true } : {}),
       ...(options.onEmployeeTrace ? { onEmployeeTrace: options.onEmployeeTrace } : {}),
+      ...(options.router ? { router: options.router } : {}),
       ...(options.platformCapabilities ? { platformCapabilities: options.platformCapabilities } : {}),
       ...(options.legacyEntry !== undefined ? { legacyEntry: options.legacyEntry } : {}),
       env,

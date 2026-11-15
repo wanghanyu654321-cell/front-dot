@@ -70,6 +70,7 @@ const SLOT_KEYS = new Set(['amountText', 'customer', 'employee', 'index', 'perio
 export function parseModelClassification(output: unknown): ModelClassification | null {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
   const o = output as Record<string, unknown>;
+  if (Object.keys(o).some(key => !['intent', 'object', 'action', 'slots', 'confidence', 'uncertain'].includes(key))) return null;
   if (typeof o.intent !== 'string' || !INTENT_SET.has(o.intent)) return null;
   if (typeof o.confidence !== 'number' || !Number.isFinite(o.confidence) || o.confidence < 0 || o.confidence > 1) return null;
   if (typeof o.uncertain !== 'boolean') return null;
@@ -202,6 +203,7 @@ export async function runModelClassifier(
   signal?: AbortSignal,
   deadline?: number,
   timeoutMs?: number,
+  observe?: (diagnostic: { modelMs: number; errorCategory: string }) => void,
 ): Promise<unknown> {
   if (!classifier) return stubModelClassifier({ text, signal: signal ?? new AbortController().signal });
   const cap = (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0)
@@ -210,20 +212,28 @@ export async function runModelClassifier(
   const remaining = Math.max(0, Math.min(cap, untilDeadline));
   if (remaining < 50 || signal?.aborted) return uncertainClassification();
   const child = new AbortController();
-  const stop = () => child.abort();
+  let cancel!: () => void;
+  const aborted = new Promise<never>((_, reject) => { cancel = () => { child.abort(); reject(Error('model_cancelled')); }; });
+  const stop = () => cancel();
   signal?.addEventListener('abort', stop, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const started = performance.now();
+  let errorCategory = 'none';
   try {
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { child.abort(); reject(new Error('model_classify_timeout')); }, remaining);
+      timer = setTimeout(() => { reject(new Error('model_classify_timeout')); child.abort(); }, remaining);
     });
-    return await Promise.race([classifier({ text, signal: child.signal }), timeout]);
-  } catch {
+    return await Promise.race([classifier({ text, signal: child.signal }), timeout, aborted]);
+  } catch (error) {
+    const failure = error as { message?: string; status?: number };
+    errorCategory = failure.message === 'model_classify_timeout' ? 'timeout' : failure.message === 'model_cancelled' ? 'cancelled'
+      : failure.status === 429 || failure.message === 'model_http_429' ? 'rate_limit' : 'model_error';
     return uncertainClassification();
   } finally {
     if (timer) clearTimeout(timer);
     signal?.removeEventListener('abort', stop);
     child.abort();
+    try { observe?.({ modelMs: Math.round((performance.now() - started) * 1000) / 1000, errorCategory }); } catch { /* Observation is best effort. */ }
   }
 }
 
@@ -245,12 +255,12 @@ function asMode(v: unknown): 'stub' | 'live' | undefined {
  * 读配置。优先级：入参对象/文件 → 环境变量 FC_MODEL_MODE / FC_MODEL_TIMEOUT_MS / FC_MODEL_ENDPOINT。
  * 文件路径也可由 FC_MODEL_CONFIG 给出。缺省为桩、8 秒超时。
  */
-export function loadModelRuntimeConfig(source?: string | Partial<ModelRuntimeConfig> | null): ModelRuntimeConfig {
+export function loadModelRuntimeConfig(source?: string | Partial<ModelRuntimeConfig> | null, env: Readonly<Record<string, string | undefined>> = process.env): ModelRuntimeConfig {
   let file: Partial<ModelRuntimeConfig> = {};
   if (typeof source === 'object' && source) {
     file = source;
   } else {
-    const path = (typeof source === 'string' && source.trim()) ? source.trim() : (process.env.FC_MODEL_CONFIG ?? '').trim();
+    const path = (typeof source === 'string' && source.trim()) ? source.trim() : (env.FC_MODEL_CONFIG ?? '').trim();
     if (path) {
       const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
       const body = (raw.model && typeof raw.model === 'object') ? raw.model as Record<string, unknown> : raw;
@@ -264,12 +274,12 @@ export function loadModelRuntimeConfig(source?: string | Partial<ModelRuntimeCon
       };
     }
   }
-  const mode = asMode(process.env.FC_MODEL_MODE) ?? file.mode ?? 'stub';
-  const timeoutRaw = process.env.FC_MODEL_TIMEOUT_MS !== undefined && process.env.FC_MODEL_TIMEOUT_MS !== ''
-    ? Number(process.env.FC_MODEL_TIMEOUT_MS)
+  const mode = asMode(env.FC_MODEL_MODE) ?? file.mode ?? 'stub';
+  const timeoutRaw = env.FC_MODEL_TIMEOUT_MS !== undefined && env.FC_MODEL_TIMEOUT_MS !== ''
+    ? Number(env.FC_MODEL_TIMEOUT_MS)
     : (typeof file.timeoutMs === 'number' ? file.timeoutMs : DEFAULT_MODEL_TIMEOUT_MS);
   const timeoutMs = Math.max(50, Math.min(Number.isFinite(timeoutRaw) ? timeoutRaw : DEFAULT_MODEL_TIMEOUT_MS, 60_000));
-  const endpoint = (process.env.FC_MODEL_ENDPOINT?.trim() || file.endpoint || '').trim() || undefined;
+  const endpoint = (env.FC_MODEL_ENDPOINT?.trim() || file.endpoint || '').trim() || undefined;
   const result: ModelRuntimeConfig = { mode, timeoutMs };
   if (endpoint) result.endpoint = endpoint;
   if (file.apiKeyEnv) result.apiKeyEnv = file.apiKeyEnv;
@@ -277,14 +287,14 @@ export function loadModelRuntimeConfig(source?: string | Partial<ModelRuntimeCon
   return result;
 }
 
-function liveClassifier(cfg: ModelRuntimeConfig): ModelClassifier {
+function liveClassifier(cfg: ModelRuntimeConfig, env: Readonly<Record<string, string | undefined>>): ModelClassifier {
   const endpoint = cfg.endpoint!;
   const apiKeyEnv = cfg.apiKeyEnv;
   const model = cfg.model;
   return async ({ text, signal }) => {
     const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
     if (apiKeyEnv) {
-      const key = process.env[apiKeyEnv];
+      const key = env[apiKeyEnv];
       if (key) headers.authorization = `Bearer ${key}`;
     }
     const body = {
@@ -309,12 +319,12 @@ function liveClassifier(cfg: ModelRuntimeConfig): ModelClassifier {
  * 按配置构造分类器。mode=stub（默认）返回确定性桩；mode=live 且有 endpoint 才走 HTTP。
  * 真模型的超时/抛错由 runModelClassifier 收成 uncertain。本函数不在默认路径发起网络请求。
  */
-export function createModelClassifier(source?: string | Partial<ModelRuntimeConfig> | null): ModelClassifier {
-  const cfg = loadModelRuntimeConfig(source);
+export function createModelClassifier(source?: string | Partial<ModelRuntimeConfig> | null, env: Readonly<Record<string, string | undefined>> = process.env): ModelClassifier {
+  const cfg = loadModelRuntimeConfig(source, env);
   if (cfg.mode !== 'live') return stubModelClassifier;
   if (!cfg.endpoint) {
     // 误配成 live 但没有地址：不执行、不假装是桩静默成功；每次都拿不准。
     return async () => uncertainClassification();
   }
-  return liveClassifier(cfg);
+  return liveClassifier(cfg, cfg.apiKeyEnv ? Object.freeze({ [cfg.apiKeyEnv]: env[cfg.apiKeyEnv] }) : {});
 }
