@@ -26,11 +26,17 @@ export function validateCompose(doc, mode = 'production') {
   if (!offline && (!doc.networks?.outbound || doc.networks.outbound.internal)) failures.push('outbound_required');
   return failures;
 }
+export function validateComposePair(production, offline) {
+  const failures = [...validateCompose(production), ...validateCompose(offline, 'offline')];
+  const major = doc => /(?:^|\/)postgres:(\d+)\./.exec(doc.services?.pg?.image ?? '')?.[1];
+  if (!major(production) || major(production) !== major(offline)) failures.push('pg_major_mismatch');
+  return failures;
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const failures = [
-    ...validateCompose(JSON.parse(readFileSync('deploy/compose.json', 'utf8'))),
-    ...validateCompose(JSON.parse(readFileSync('deploy/compose.e2e.json', 'utf8')), 'offline'),
-  ];
+  const failures = validateComposePair(
+    JSON.parse(readFileSync('deploy/compose.json', 'utf8')),
+    JSON.parse(readFileSync('deploy/compose.e2e.json', 'utf8')),
+  );
   process.stdout.write(JSON.stringify({ check: 'compose-static', failures }) + '\n');
   process.exitCode = failures.length ? 1 : 0;
 }

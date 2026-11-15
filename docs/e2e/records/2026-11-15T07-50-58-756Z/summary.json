@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "backend": "local",
-  "status": "failed",
-  "gates": "未复跑（需授权语料）",
-  "steps": 11,
-  "failures": 1
-}

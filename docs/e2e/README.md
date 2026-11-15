@@ -17,22 +17,28 @@ node scripts/deploy/validate-compose.mjs
 ## 无 Docker 路径
 
 ```sh
-PG_BIN='<PG17_BIN>' node scripts/e2e/run.mjs --backend local
+PG_BIN='<PG17_BIN>' node scripts/e2e/run.mjs --backend local --out docs/e2e/records/local
 ```
 
 驱动用系统临时目录创建一次性数据目录，PG 只监听回环地址，随机端口，禁用 Unix socket，trust 认证；绝不连接已有 PG。所有账号口令临时随机生成，只在进程环境中传递。trust 下权限验证仍使用不同数据库身份，验证的是授权隔离。PG 日志、数据、备份和临时查询结果均在退出时清理，不入库。
 
-可用 `--out '<RECORD_DIR>'` 指定脱敏记录目录。默认写入 `docs/e2e/records/<日期时间>/`。首次失败即非零退出并清理；失败记录保留，不能把未执行的步骤算作通过。强制杀进程时需要审查方自行停止残余临时 PG 并清理临时目录。
+可用 `--out '<RECORD_DIR>'` 指定脱敏记录目录。审查记录统一用 `docs/e2e/records/local`；同名文件会覆盖，运行前应保存需要保留的旧记录。不指定时默认写入 `docs/e2e/records/<日期时间>/`。集成测试显式指定系统临时目录，并在测试成功或失败后清理，不写仓库记录目录。首次失败即非零退出并清理；失败记录保留，不能把未执行的步骤算作通过。强制杀进程时需要审查方自行停止残余临时 PG 并清理临时目录。
 
 ## Compose 路径
 
 ```sh
-node scripts/e2e/run.mjs --backend compose
+node scripts/e2e/run.mjs --backend compose --out docs/e2e/records/compose
 ```
 
 需要 Docker Engine 和 Compose 插件。使用独立离线文件 `deploy/compose.e2e.json`、同一个 `steps.mjs`、同一个 standalone 入口。仅“创建环境、启动、重启、停止”的后端不同。驱动临时生成账号变量并使用随机 Compose 项目名，构建本地镜像、起 PG，迁移后起核心；数据库、核心均无宿主端口。驱动容器在私有内部网络中访问 PG 和核心。退出只删除该次一次性项目的容器和卷，不删除镜像。离线文件不引用服务器 env_file，不与生产配置合并。
 
 Compose 构建默认要求 main 和干净工作区，创建记录目录前先核对 Git 状态。审查尚未提交的本任务实现时，显式加 `--allow-dirty`；非 main 还需显式加 `--allow-non-main`。例外构建仅用于一次性验证，镜像虽标记当前 HEAD，却不能当作 main 已发布证明。正式部署使用 `scripts/deploy/deploy.sh` 的同样准入检查。
+
+在有 Docker 的机器上验证当前非 main、未提交工作区的完整命令：
+
+```sh
+node scripts/e2e/run.mjs --backend compose --allow-dirty --allow-non-main --out docs/e2e/records/compose
+```
 
 JSON 是 YAML 的子集，此格式无须增加 YAML 依赖。静态校验：
 
@@ -40,7 +46,9 @@ JSON 是 YAML 的子集，此格式无须增加 YAML 依赖。静态校验：
 node scripts/deploy/validate-compose.mjs
 ```
 
-预期 `failures` 为空。有 Docker 时，驱动还会在仅进程环境提供的临时变量下运行 `docker compose -f deploy/compose.e2e.json config --quiet`。服务器使用仓库外运维 env 文件执行同样的 config 检查，不把展开后的 config 写入记录。
+本环境没有 Docker，仅对两份 Compose 做静态校验：同一 PG 大版本、核心及其他服务均无宿主端口、生产无合成开关。预期输出 `{"check":"compose-static","failures":[]}`，这不代表 Compose 已实跑。有 Docker 时，驱动还会在仅进程环境提供的临时变量下运行 `docker compose -f deploy/compose.e2e.json config --quiet`。服务器使用仓库外运维 env 文件执行同样的 config 检查，不把展开后的 config 写入记录。
+
+Compose 合成步骤全部成功时退出 0，标准输出两行 `e2e_passed` 与 `未复跑（需授权语料）`，指定目录产生带合成声明的 `steps.json` 和 `summary.json`；摘要应为 status=passed、steps=15、failures=0。门①②仍未复跑，不计作评测通过；任一步失败则退出非零，记录失败和实际已执行步骤。
 
 ## 逐项验收
 
@@ -69,15 +77,15 @@ issue 的“001–010”对应当前源码的历史基线与后续迁移：007 �
 
 ## 门禁复跑
 
-本轮不复跑门①、门②；盲测语料不在仓库且本轮没有读取授权。驱动固定打印并记录“未复跑（需授权语料）”，不把历史准入数字作为本次结果。
+本轮不复跑门①②；需要授权语料，本轮不读取任何语料。驱动固定打印并记录“未复跑（需授权语料）”，不把历史准入数字作为本次结果。
 
 由有权限的人在同一隔离环境按原评测约定执行：
 
 ```sh
-scripts/eval-gates.sh --corpus '<授权语料>' --out '<仓库外路径>'
+scripts/eval-gates.sh --corpus '<授权语料>' --out '<仓库外摘要文件>' --model stub
 ```
 
-原脚本和评测代码保持不变；本任务按指定命令保留运维步骤，不读取或改动评测实现。授权执行人只把门①、门②计数及与既有准入计数的比对结论写入记录，输入、原始输出、个案 ID 和语料留在仓库外。驱动没有语料参数，也不会主动触发门禁。
+命令参数依现有脚本用法，显式选择离线桩；须由有权限的人在同一隔离环境执行。原脚本和评测代码保持不变，不打开语料或评测摘要文件。授权执行人只另存门①②计数及与既有准入计数的比对结论，输入、原始输出、个案 ID 和语料留在仓库外。驱动记录保持“未复跑”，没有语料参数，也不会主动触发门禁。
 
 ## 集成测试与记录
 
@@ -88,9 +96,9 @@ AUDIT_PG_ALLOW=isolated-synthetic FRONT_CLAW_PG_BIN='<PG17_BIN>' npx vitest run 
 
 集成测试沿用 `AUDIT_PG_ALLOW` 准入，未授权则 skip。兼容检查 `AUDIT_PG_URL`（若提供，须指向回环合成库），但不使用它连接常驻数据库；测试总是自行创建一次性集群。测试前构建。不得用共享 PG 验证。
 
-`steps.json` 按步骤记录脱敏命令、退出码、耗时和关键计数；`summary.json` 记录整体通过/失败与门禁跳过。驱动只保存明确选择的计数/断言，不保存子进程原始 stdout/stderr、连接串、平台消息正文或外部参数。记录不得包含绝对路径、用户名、主机名、真实地址和口令。备份本体和查询正文不在记录内。实际运行记录由审查方生成，本目录不提供虚构通过记录。
+`steps.json` 按步骤记录脱敏命令、退出码、耗时和关键计数；`summary.json` 记录整体通过/失败与门禁跳过；两份文件均含 notice="合成数据，不代表线上"。驱动写盘前校验命令模板和字段白名单，并拒绝绝对路径、当前用户名、主机名、连接串及地址；失败只报稳定错误码，不回显违规内容。驱动不保存子进程原始 stdout/stderr、平台消息正文或外部参数。备份本体和查询正文不在记录内。实际运行记录由审查方在沙箱外的一次性本地 PG17 环境生成，见 [记录说明](records/README.md)。
 
-本沙箱不允许回环 socket，因而这里的单测、编译和静态检查不能替代上述 PG、Docker 实跑。完整 OpenDot 宿主不在本仓库，也不计作已经运行。
+本轮未运行 PG，环境没有 Docker；这里的单测、编译和静态检查不能替代上述 PG、Compose 实跑。完整 OpenDot 宿主不在本仓库，也不计作已经运行。
 
 ## 模型与入口约束
 

@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, access } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { command } from './process.mjs';
 import { resolvePgTool } from './pg-tools.mjs';
+import { notice, writeRecord } from './records.mjs';
 import { assertImageVersion } from '../deploy/image-version.mjs';
 
 const flags = process.argv.slice(2);
@@ -49,7 +50,7 @@ async function record(name, display, work) {
       ...(error.assertion ? { assertion: error.assertion } : {}) });
     throw error;
   } finally {
-    await writeFile(path.join(out, 'steps.json'), JSON.stringify({ version: 1, backend, steps: records }, null, 2) + '\n');
+    await writeRecord(path.join(out, 'steps.json'), { version: 1, notice, backend, steps: records });
   }
 }
 async function unusedPort() {
@@ -170,7 +171,7 @@ finally {
     if (temp) await rm(temp, { recursive: true, force: true });
   }).catch(() => { failed = true; });
 }
-await writeFile(path.join(out, 'summary.json'), JSON.stringify({ version: 1, backend, status: failed ? 'failed' : 'passed',
-  gates: '未复跑（需授权语料）', steps: records.length, failures: records.filter(row => row.exitCode !== 0).length }, null, 2) + '\n');
+await writeRecord(path.join(out, 'summary.json'), { version: 1, notice, backend, status: failed ? 'failed' : 'passed',
+  gates: '未复跑（需授权语料）', steps: records.length, failures: records.filter(row => row.exitCode !== 0).length });
 process.stdout.write((failed ? 'e2e_failed' : 'e2e_passed') + '\n未复跑（需授权语料）\n');
 process.exitCode = failed ? 1 : 0;

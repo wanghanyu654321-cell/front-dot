@@ -7,6 +7,18 @@ const exec = promisify(execFile);
 const read = (file: string) => readFileSync(file, 'utf8');
 
 describe('deployment contract', () => {
+  it('checks both Compose documents together for PG version, private core and production isolation', async () => {
+    const { validateComposePair } = await import('../../scripts/deploy/validate-compose.mjs');
+    const production = JSON.parse(read('deploy/compose.json'));
+    const offline = JSON.parse(read('deploy/compose.e2e.json'));
+    expect(validateComposePair(production, offline)).toEqual([]);
+    offline.services.pg.image = 'postgres:18.1-bookworm';
+    offline.services.core.ports = ['8080:8080'];
+    production.services.core.environment.AUDIT_PG_ALLOW = 'isolated-synthetic';
+    expect(validateComposePair(production, offline)).toEqual(expect.arrayContaining([
+      'pg_major_mismatch', 'private_service_ports', 'synthetic_switch',
+    ]));
+  });
   it('validates the actual Compose document and rejects public database ports', async () => {
     const { validateCompose } = await import('../../scripts/deploy/validate-compose.mjs');
     const compose = JSON.parse(read('deploy/compose.json'));
