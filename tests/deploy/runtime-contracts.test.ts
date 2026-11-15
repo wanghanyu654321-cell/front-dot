@@ -44,6 +44,24 @@ it('rejects an installed Node version below the minimum', async () => {
   await expect(exec('/bin/bash', ['-c', code])).rejects.toMatchObject({ code: 2, stderr: expect.stringContaining('需要 Node 22+') });
 });
 
-it.each(['0.0.0.0/1,128.0.0.0/1', '192.0.0.0/7', '2000::/7', '::/1,8000::/1'])('rejects overly broad SSH sources: %s', async cidrs => {
-  await expect(exec('bash', ['scripts/deploy/firewall.sh'], { env: { PATH: process.env.PATH, SSH_ALLOW_CIDRS: cidrs } })).rejects.toMatchObject({ code: 2 });
+it.each(['0.0.0.0/1,128.0.0.0/1', '192.0.0.0/7', '2000::/7', '::/1,8000::/1', '10.0.0.0/15', '2001:db8::/31'])('rejects overly broad SSH sources: %s', async cidrs => {
+  await expect(exec('bash', ['scripts/deploy/firewall.sh'], { env: { PATH: process.env.PATH, SSH_ALLOW_CIDRS: cidrs } })).rejects.toMatchObject({
+    code: 2, stderr: expect.stringContaining('IPv4 prefix >= 16 and IPv6 prefix >= 32'),
+  });
+});
+
+it.each(['10.1.0.0/16', '2001:db8::/32'])('accepts the minimum SSH source prefix: %s', async cidrs => {
+  const { stdout } = await exec('bash', ['scripts/deploy/firewall.sh'], { env: { PATH: process.env.PATH, SSH_ALLOW_CIDRS: cidrs } });
+  expect(stdout).toContain(`ufw allow from ${cidrs} to any port 22 proto tcp`);
+  expect(stdout.indexOf('ufw allow from')).toBeLessThan(stdout.indexOf('ufw --force enable'));
+});
+
+it('accepts all five default terminal proxy subnets before enabling the firewall', async () => {
+  const { stdout } = await exec('bash', ['scripts/deploy/firewall.sh'], { env: { PATH: process.env.PATH } });
+  const sources = stdout.split('\n').filter(line => line.startsWith('ufw allow from '));
+  expect(sources).toHaveLength(5);
+  for (const source of sources) {
+    expect(source).toMatch(/\/24 to any port 22 proto tcp$/);
+    expect(stdout.indexOf(source)).toBeLessThan(stdout.indexOf('ufw --force enable'));
+  }
 });

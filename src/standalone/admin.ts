@@ -1,6 +1,5 @@
-import pg from 'pg';
 import { pathToFileURL } from 'node:url';
-import { sqlClient } from './database.js';
+import { createDatabasePool, sqlClient } from './database.js';
 import { provisionAccounts } from './provision.js';
 import { migrateUp, LATEST_SCHEMA_VERSION } from '../role-eval/schema-migrations.js';
 import type { SqlClient } from '../role-eval/performance-postgres.js';
@@ -19,7 +18,7 @@ interface AdminDeps {
 }
 const defaults: AdminDeps = {
   async open(url) {
-    const pool = new pg.Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 5000 });
+    const pool = createDatabasePool(url, 1);
     return { client: sqlClient(pool), close: () => pool.end() };
   },
   migrate: migrateUp,

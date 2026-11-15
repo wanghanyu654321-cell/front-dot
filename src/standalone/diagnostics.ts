@@ -11,6 +11,7 @@ const summaries: Record<string, [string, string]> = {
   ENOTFOUND: ['network', 'Host resolution failed'], EADDRINUSE: ['network', 'Local health port is already in use'],
   '28P01': ['database', 'Database authentication failed'], '42501': ['database', 'Database permission denied'],
   '3D000': ['database', 'Database does not exist'], ERR_INVALID_URL: ['configuration', 'A configured URL is invalid'],
+  '57P01': ['database', 'Database connection terminated by administrator'],
 };
 
 /** Never serialize raw errors: messages can contain credentials, connection strings or user content. */
@@ -25,7 +26,10 @@ export function createStandaloneLogger(write?: (line: string) => void): OpenDotH
   const emit = (level: string, fields: Record<string, unknown>) => {
     let record: Record<string, unknown>;
     if (fields.event === 'standalone_start_failed') record = { event: fields.event, ...safeFailure(fields.error) };
-    else if (fields.event === 'inbound_message') {
+    else if (fields.event === 'database_pool_error') {
+      const { errorCategory, errorCode } = safeFailure(fields.error);
+      record = { event: fields.event, errorCategory, errorCode };
+    } else if (fields.event === 'inbound_message') {
       // The adapter owns these categorical diagnostics; ignore all additional fields.
       record = Object.fromEntries(['event', 'operationId', 'route', 'gateReason', 'pendingSequence', 'modelMs', 'errorCategory'].map(key => [key, fields[key]]));
     } else if (['active', 'closed', 'standby', 'disabled', 'ready'].includes(String(fields.state))) record = { event: 'lifecycle', state: fields.state };

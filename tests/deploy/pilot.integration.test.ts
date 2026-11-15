@@ -1,13 +1,14 @@
 import { expect, it } from 'vitest';
-import pg from 'pg';
+import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { runAdmin } from '../../src/standalone/admin.js';
-import { sqlClient, openRuntimeDatabase } from '../../src/standalone/database.js';
+import { createDatabasePool, sqlClient, openRuntimeDatabase } from '../../src/standalone/database.js';
 import { migrateUp } from '../../src/role-eval/schema-migrations.js';
 import { startFrontClawOpenDotService } from '../../src/opendot/index.js';
 import { createOfflineChannel } from '../../src/standalone/offline.js';
 import { EMPLOYEE_LOOP_CONFIG } from '../../src/role-eval/employee-loop.js';
 import { ACCESS_POLICY_KEY } from '../../src/role-eval/access-policy.js';
+import { dropIdleDatabase } from './isolated-database.js';
 
 const approved = process.env.AUDIT_PG_ALLOW === 'isolated-synthetic' && !!process.env.AUDIT_PG_URL;
 it.skipIf(!approved)('initializes a pilot twice without extra rows and resolves its binding through the adapter and employee loop', async () => {
@@ -16,14 +17,15 @@ it.skipIf(!approved)('initializes a pilot twice without extra rows and resolves 
   expect(['127.0.0.1', 'localhost', '[::1]']).toContain(target.hostname);
   expect(['postgres:', 'postgresql:']).toContain(target.protocol);
   const database = 'synthetic_pilot_' + randomUUID().replaceAll('-', '');
-  const control = new pg.Pool({ connectionString: target.href, max: 1, connectionTimeoutMillis: 5000 });
+  const control = createDatabasePool(target.href, 1);
   let pool: pg.Pool | undefined;
   let service: Awaited<ReturnType<typeof startFrontClawOpenDotService>> | undefined;
+  let closeRuntime: (() => Promise<void>) | undefined;
   let created = false;
   try {
     await control.query(`CREATE DATABASE "${database}"`); created = true;
     target.pathname = '/' + database;
-    pool = new pg.Pool({ connectionString: target.href, max: 2, connectionTimeoutMillis: 5000 });
+    pool = createDatabasePool(target.href, 2);
     await migrateUp(sqlClient(pool), { apply: true });
     const environment = { DATABASE_ADMIN_URL: target.href, FRONT_CLAW_WECOM_BOT_ID: 'pilot-bot', PILOT_MEMBER_ID: 'pilot-member',
       PILOT_CORP_ID: 'pilot-corp', PILOT_DISPLAY_NAME: '小周', PILOT_STORE_ID: 'pilot-store', PILOT_STORE_NAME: '测试店', PILOT_ROLE: 'employee' };
@@ -44,9 +46,11 @@ it.skipIf(!approved)('initializes a pilot twice without extra rows and resolves 
     expect(JSON.parse(configs.find(row => row.key === EMPLOYEE_LOOP_CONFIG).value).memberIds).toEqual(['pilot-member']);
 
     const runtime = await openRuntimeDatabase(target.href);
+    let closingRuntime: Promise<void> | undefined;
+    closeRuntime = () => closingRuntime ??= runtime.close();
     const channel = createOfflineChannel();
     service = await startFrontClawOpenDotService({ env: { FRONT_CLAW_OPENDOT_ADAPTER: '1' }, logger: { info() {}, warn() {} } }, {
-      open: async () => runtime, channel: () => channel, timers: false, now: () => new Date('2026-11-12T02:00:00Z'), owner: 'pilot-test-consumer',
+      open: async () => ({ ...runtime, close: closeRuntime! }), channel: () => channel, timers: false, now: () => new Date('2026-11-12T02:00:00Z'), owner: 'pilot-test-consumer',
     });
     channel.inject({ botId: 'pilot-bot', corpId: 'pilot-corp', memberId: 'pilot-member', messageId: 'pilot-report', reqId: 'pilot-report', text: '12号测试店\n380（小周）' });
     await service.idle();
@@ -60,9 +64,14 @@ it.skipIf(!approved)('initializes a pilot twice without extra rows and resolves 
   } finally {
     try { await service?.close(); }
     finally {
-      await pool?.end();
-      try { if (created) await control.query(`DROP DATABASE "${database}" WITH (FORCE)`); }
-      finally { await control.end(); }
+      try { await closeRuntime?.(); }
+      finally {
+        try { await pool?.end(); }
+        finally {
+          try { if (created) await dropIdleDatabase(control, database); }
+          finally { await control.end(); }
+        }
+      }
     }
   }
 }, 60_000);

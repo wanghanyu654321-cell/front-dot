@@ -3,6 +3,15 @@ import { createPostgresPerformanceStore, type SqlClient } from '../role-eval/per
 import { createPostgresBindingStore } from '../role-eval/directory-store.js';
 import { schemaVersion } from '../role-eval/schema-migrations.js';
 import type { OpenedPerformanceStore } from '../role-eval/performance-open.js';
+import { createStandaloneLogger } from './diagnostics.js';
+
+/** Idle backend failures discard that connection; later queries can open a replacement. */
+export function createDatabasePool(databaseUrl: string, max = 4): pg.Pool {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max, connectionTimeoutMillis: 5000 });
+  const logger = createStandaloneLogger();
+  pool.on('error', error => logger.warn({ event: 'database_pool_error', error }));
+  return pool;
+}
 
 export function sqlClient(pool: pg.Pool): SqlClient {
   return {
@@ -27,7 +36,7 @@ export function sqlClient(pool: pg.Pool): SqlClient {
 
 /** No startup migrations: the runtime identity has no schema ownership. */
 export async function openRuntimeDatabase(databaseUrl: string): Promise<OpenedPerformanceStore> {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 4, connectionTimeoutMillis: 5000 });
+  const pool = createDatabasePool(databaseUrl);
   const client = sqlClient(pool);
   try {
     const version = await schemaVersion(client.query);
