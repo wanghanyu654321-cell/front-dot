@@ -10,12 +10,12 @@ if (!values.length) process.exit(2);
 for (const value of values) {
   const [address, prefix, extra] = value.split('/');
   const family = net.isIP(address);
-  if (!family || prefix === undefined || extra !== undefined || !/^\d{1,3}$/.test(prefix) || Number(prefix) <= 0 || Number(prefix) > (family === 4 ? 32 : 128)) process.exit(2);
+  if (!family || prefix === undefined || extra !== undefined || !/^\d{1,3}$/.test(prefix) || Number(prefix) < 8 || Number(prefix) > (family === 4 ? 32 : 128)) process.exit(2);
 }
 process.stdout.write([...new Set(values)].join('\n'));
 NODE
 ); then
-  echo 'SSH_ALLOW_CIDRS must contain explicit IPv4/IPv6 CIDRs with a nonzero prefix; unrestricted sources are forbidden' >&2
+  echo 'SSH_ALLOW_CIDRS must contain explicit IPv4/IPv6 CIDRs with prefix >= 8; unrestricted sources are forbidden' >&2
   exit 2
 fi
 mapfile -t sources <<< "$cidrs"

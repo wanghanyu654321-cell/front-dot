@@ -1,6 +1,8 @@
 import { expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 
@@ -59,4 +61,8 @@ it('isolates integration output in a system temporary directory and cleans it ev
   expect(test).toContain('mkdtemp(path.join(os.tmpdir(),');
   expect(test).toContain("'--out', output");
   expect(test).toMatch(/finally\s*\{\s*await rm\(output, \{ recursive: true, force: true \}\)/);
+});
+
+it('refuses explicit output into the documentation record tree before starting any environment', async () => {
+  await expect(promisify(execFile)(process.execPath, ['scripts/e2e/run.mjs', '--out', 'docs/e2e/records/local'])).rejects.toMatchObject({ stderr: expect.stringContaining('record_directory_forbidden') });
 });

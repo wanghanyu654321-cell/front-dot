@@ -140,7 +140,7 @@ it('keeps production and synthetic Compose services separate without public port
   const offline = JSON.parse(read('deploy/compose.e2e.json'));
   expect(production.services.core.environment.FRONT_DOT_CHANNEL).toBe('wecom');
   expect(production.services.core.environment).not.toHaveProperty('AUDIT_PG_ALLOW');
-  expect(production.services.core.env_file).toContain('${ENV_FILE:?required}');
+  expect(production.services.core.env_file).toContain('${CORE_ENV_FILE:?required}');
   expect(production.services).toHaveProperty('admin');
   expect(production.services).not.toHaveProperty('driver');
   expect(offline.services.core.environment.AUDIT_PG_ALLOW).toBe('isolated-synthetic');

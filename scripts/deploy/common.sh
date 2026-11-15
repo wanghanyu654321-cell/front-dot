@@ -3,6 +3,19 @@
 # Variables are consumed by the entry point that sources this library.
 set -euo pipefail
 
+require_node() {
+  local version major
+  if ! command -v node >/dev/null 2>&1 || ! version=$(node --version 2>/dev/null); then
+    echo '需要 Node 22+；请先安装或升级宿主 Node，再运行部署脚本' >&2; exit 2
+  fi
+  version=${version#v}
+  major=${version%%.*}
+  if [[ ! "$major" =~ ^[0-9]{1,3}$ ]] || (( 10#$major < 22 )); then
+    echo '需要 Node 22+；请先安装或升级宿主 Node，再运行部署脚本' >&2; exit 2
+  fi
+}
+require_node
+
 apply=0
 allow_dirty=0
 allow_non_main=0
@@ -18,13 +31,19 @@ done
 if (( apply )); then echo 'apply: planned actions follow'; else echo 'dry-run: no changes'; fi
 
 require_server_config() {
-  : "${ENV_FILE:?server env file required}" "${DEPLOY_DIR:?deployment directory required}"
-  test -f "$ENV_FILE" && test "$(stat -c '%a' "$ENV_FILE")" = 600 || { echo 'env file must have mode 600' >&2; exit 2; }
-  case "$(realpath -m "$ENV_FILE")" in "$(git rev-parse --show-toplevel)"/*) echo 'env file must be outside repository' >&2; exit 2 ;; esac
+  : "${CORE_ENV_FILE:?core env file required}" "${ADMIN_ENV_FILE:?management env file required}" "${DEPLOY_DIR:?deployment directory required}"
+  local file
+  for file in "$CORE_ENV_FILE" "$ADMIN_ENV_FILE"; do
+    [[ "$file" = /* ]] || { echo 'env file must be an absolute path' >&2; exit 2; }
+    test -f "$file" && test "$(stat -c '%a' "$file")" = 600 || { echo 'env file must have mode 600' >&2; exit 2; }
+    case "$(realpath -m "$file")" in "$(git rev-parse --show-toplevel)"/*) echo 'env file must be outside repository' >&2; exit 2 ;; esac
+  done
+  [[ "$(realpath -m "$CORE_ENV_FILE")" != "$(realpath -m "$ADMIN_ENV_FILE")" ]] || { echo 'core and management env files must be separate' >&2; exit 2; }
+  export CORE_ENV_FILE ADMIN_ENV_FILE
   case "$(realpath -m "$DEPLOY_DIR")" in "$(git rev-parse --show-toplevel)"/*) echo 'state directory must be outside repository' >&2; exit 2 ;; esac
 }
 compose() {
-  docker compose --env-file "$ENV_FILE" -p front-dot -f deploy/compose.json "$@"
+  docker compose --env-file "$ADMIN_ENV_FILE" -p front-dot -f deploy/compose.json "$@"
 }
 stop_consumer() {
   echo 'stop old: gracefully stop core'

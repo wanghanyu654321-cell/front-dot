@@ -4,9 +4,16 @@ import { startFrontClawOpenDotService, operationIdFor, wecomChannelFromEnv, type
 import { openRuntimeDatabase } from './database.js';
 import { createOfflineChannel, standaloneOptions } from './offline.js';
 import { createSyntheticModel } from './synthetic-model.js';
-import { createModelClassifier, loadModelRuntimeConfig } from '../role-eval/model-classify.js';
+import { loadModelRuntimeConfig } from '../role-eval/model-classify.js';
+import { standaloneModelClassifier } from './compatible-model.js';
+import { createStandaloneLogger } from './diagnostics.js';
 
 export async function startStandalone(env: Readonly<Record<string, string | undefined>>, deps: AdapterDeps = {}) {
+  try { return await assembleStandalone(env, deps); }
+  catch (error) { createStandaloneLogger().warn({ event: 'standalone_start_failed', error }); throw error; }
+}
+
+async function assembleStandalone(env: Readonly<Record<string, string | undefined>>, deps: AdapterDeps) {
   const offline = env.FRONT_DOT_CHANNEL !== 'wecom';
   // Offline configuration must never inspect channel/model credentials, including optional files.
   const options = offline ? { ...standaloneOptions(env), channelEnv: undefined } : productionOptions(env);
@@ -16,10 +23,10 @@ export async function startStandalone(env: Readonly<Record<string, string | unde
     : Object.freeze({ ...options.channelEnv, FRONT_CLAW_OPENDOT_ADAPTER: '1', FRONT_CLAW_NOTIFY_DISPATCH: '0',
       FRONT_CLAW_OPENDOT_CAPABILITIES: env.FRONT_CLAW_OPENDOT_CAPABILITIES, FRONT_CLAW_MEM0: env.FRONT_CLAW_MEM0 });
   const modelConfig = offline ? undefined : loadModelRuntimeConfig(null, env);
-  const modelClassify = offline ? createSyntheticModel() : createModelClassifier(modelConfig, env);
+  const modelClassify = offline ? createSyntheticModel() : standaloneModelClassifier(env);
   const service = await startFrontClawOpenDotService({
     env: runtimeEnv,
-    logger: { info(fields) { if (fields.event === 'inbound_message') process.stdout.write(JSON.stringify(fields) + '\n'); }, warn() {} },
+    logger: createStandaloneLogger(),
   }, { open: () => openRuntimeDatabase(options.databaseUrl),
     channel: offline ? () => (channel = createOfflineChannel()) : () => wecomChannelFromEnv(options.channelEnv!),
     modelClassify, modelClassifyTimeoutMs: offline ? 100 : modelConfig!.timeoutMs,
@@ -87,6 +94,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   startStandalone(process.env).then(runtime => {
     const shutdown = () => { void runtime.close().then(() => process.exit(0), () => process.exit(1)); };
     process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
-    process.stdout.write('standalone_ready\n');
-  }).catch(() => { process.stderr.write('standalone_start_failed\n'); process.exitCode = 1; });
+    createStandaloneLogger().info({ state: 'ready' });
+  }).catch(() => { process.exitCode = 1; });
 }

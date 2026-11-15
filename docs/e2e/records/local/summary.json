@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "notice": "合成数据，不代表线上",
-  "backend": "local",
-  "status": "passed",
-  "gates": "未复跑（需授权语料）",
-  "steps": 15,
-  "failures": 0
-}

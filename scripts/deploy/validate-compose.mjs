@@ -9,6 +9,7 @@ export function validateCompose(doc, mode = 'production') {
   for (const service of Object.values(doc.services)) {
     if (service.ports?.length) failures.push('private_service_ports');
     if (service.privileged || service.network_mode === 'host') failures.push('host_access');
+    if (service !== pg && (service.read_only !== true || !service.tmpfs?.includes('/tmp'))) failures.push('writable_temporary_directory');
     if (!/^front-dot:\$\{FRONT_DOT_SHA:\?required\}$|^[a-z0-9./-]+:\d+\.\d+(?:\.\d+)?(?:-[a-z0-9.-]+)?$|^[a-z0-9./-]+@sha256:[a-f0-9]{64}$/.test(service.image ?? '')) failures.push('floating_image');
   }
   if (Object.keys(doc.services).some(name => !['pg', 'core', offline ? 'driver' : 'admin'].includes(name))) failures.push('unexpected_service');
@@ -19,7 +20,8 @@ export function validateCompose(doc, mode = 'production') {
   } else {
     if (core.environment?.FRONT_DOT_CHANNEL !== 'wecom') failures.push('production_channel');
     if (Object.values(doc.services).some(service => Object.hasOwn(service.environment ?? {}, 'AUDIT_PG_ALLOW'))) failures.push('synthetic_switch');
-    if (JSON.stringify(core.env_file) !== '["${ENV_FILE:?required}"]') failures.push('server_env_file');
+    if (JSON.stringify(core.env_file) !== '["${CORE_ENV_FILE:?required}"]' || JSON.stringify(admin.env_file) !== '["${ADMIN_ENV_FILE:?required}"]') failures.push('server_env_file');
+    if (/ADMIN_URL|ADMIN_PASSWORD|DB_PASSWORD|ADMIN_ENV_FILE/.test(JSON.stringify(core))) failures.push('management_credentials_in_core');
   }
   if (pg.image !== 'postgres:17.6-bookworm') failures.push('pg17');
   if (doc.networks?.private?.internal !== true || JSON.stringify(core.networks) !== (offline ? '["private"]' : '["private","outbound"]') || JSON.stringify(pg.networks) !== '["private"]') failures.push('network_boundary');

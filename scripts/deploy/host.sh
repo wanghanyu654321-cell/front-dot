@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck source=scripts/deploy/common.sh
 source "$(dirname "$0")/common.sh"
-echo 'plan: check installed Docker Engine >=29 and Compose >=5; no installation or host changes'
+echo 'plan: check installed Node >=22, Docker Engine >=29 and Compose >=5; no installation or host changes'
 # Read-only checks run in both preview and apply; the deployment user needs Docker access.
 if ! engine=$(docker version --format '{{.Server.Version}}' 2>/dev/null) || ! plugin=$(docker compose version --short 2>/dev/null); then
   echo 'Docker >=29 and Compose >=5 must already be installed and accessible; ask the host operator' >&2

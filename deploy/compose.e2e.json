@@ -97,7 +97,10 @@
           "max-file": "3"
         }
       },
-      "restart": "unless-stopped"
+      "restart": "unless-stopped",
+      "tmpfs": [
+        "/tmp"
+      ]
     },
     "driver": {
       "image": "front-dot:${FRONT_DOT_SHA:?required}",
@@ -131,7 +134,11 @@
           "max-size": "10m",
           "max-file": "3"
         }
-      }
+      },
+      "read_only": true,
+      "tmpfs": [
+        "/tmp"
+      ]
     }
   },
   "networks": {

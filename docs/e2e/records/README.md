@@ -3,10 +3,10 @@
 审查方在沙箱外的一次性本地 PG17 环境中，先按 [先决条件](../README.md) 配好 PG_BIN 并构建，再执行以下命令生成规范记录：
 
 ```sh
-node scripts/e2e/run.mjs --backend local --out docs/e2e/records/local
+node scripts/e2e/run.mjs --backend local --out .e2e-records/local
 ```
 
-记录由驱动生成，不能手写通过结果。固定输出目录中的同名文件会覆盖。集成测试使用系统临时目录，成功或失败均清理，不在这里留下记录。默认不传 --out 时，驱动仍按运行时间新建目录。
+记录由驱动生成，不能手写通过结果。默认输出为仓库根 `.e2e-records/<日期时间>/`，已被 `.gitignore` 忽略；可显式指定仓库外目录。样例记录不放仓库，禁止把运行输出写入文档目录。固定输出目录中的同名文件会覆盖。集成测试使用系统临时目录，成功或失败均清理，不在这里留下记录。默认不传 --out 时，驱动仍按运行时间新建目录。
 
 `steps.json` 顶层字段为 version、notice、backend、steps；每个 step 含 step、command（固定脱敏模板）、exitCode、durationMs、counts，失败时含稳定错误码和可选断言名。`summary.json` 含 version、notice、backend、status、gates、steps、failures。每份文件均标明 notice="合成数据，不代表线上"。
 

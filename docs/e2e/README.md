@@ -17,17 +17,17 @@ node scripts/deploy/validate-compose.mjs
 ## 无 Docker 路径
 
 ```sh
-PG_BIN='<PG17_BIN>' node scripts/e2e/run.mjs --backend local --out docs/e2e/records/local
+PG_BIN='<PG17_BIN>' node scripts/e2e/run.mjs --backend local --out .e2e-records/local
 ```
 
 驱动用系统临时目录创建一次性数据目录，PG 只监听回环地址，随机端口，禁用 Unix socket，trust 认证；绝不连接已有 PG。所有账号口令临时随机生成，只在进程环境中传递。trust 下权限验证仍使用不同数据库身份，验证的是授权隔离。PG 日志、数据、备份和临时查询结果均在退出时清理，不入库。
 
-可用 `--out '<RECORD_DIR>'` 指定脱敏记录目录。审查记录统一用 `docs/e2e/records/local`；同名文件会覆盖，运行前应保存需要保留的旧记录。不指定时默认写入 `docs/e2e/records/<日期时间>/`。集成测试显式指定系统临时目录，并在测试成功或失败后清理，不写仓库记录目录。首次失败即非零退出并清理；失败记录保留，不能把未执行的步骤算作通过。强制杀进程时需要审查方自行停止残余临时 PG 并清理临时目录。
+可用 `--out '<RECORD_DIR>'` 指定脱敏记录目录。审查记录统一用 `.e2e-records/local`；同名文件会覆盖，运行前应保存需要保留的旧记录。不指定时默认写入 被 .gitignore 忽略的 `.e2e-records/<日期时间>/`。样例记录不放仓库，禁止把输出写到文档目录。集成测试显式指定系统临时目录，并在测试成功或失败后清理，不写仓库记录目录。首次失败即非零退出并清理；失败记录保留，不能把未执行的步骤算作通过。强制杀进程时需要审查方自行停止残余临时 PG 并清理临时目录。
 
 ## Compose 路径
 
 ```sh
-node scripts/e2e/run.mjs --backend compose --out docs/e2e/records/compose
+node scripts/e2e/run.mjs --backend compose --out .e2e-records/compose
 ```
 
 需要 Docker Engine 和 Compose 插件。使用独立离线文件 `deploy/compose.e2e.json`、同一个 `steps.mjs`、同一个 standalone 入口。仅“创建环境、启动、重启、停止”的后端不同。驱动临时生成账号变量并使用随机 Compose 项目名，构建本地镜像、起 PG，迁移后起核心；数据库、核心均无宿主端口。驱动容器在私有内部网络中访问 PG 和核心。退出只删除该次一次性项目的容器和卷，不删除镜像。离线文件不引用服务器 env_file，不与生产配置合并。
@@ -37,7 +37,7 @@ Compose 构建默认要求 main 和干净工作区，创建记录目录前先核
 在有 Docker 的机器上验证当前非 main、未提交工作区的完整命令：
 
 ```sh
-node scripts/e2e/run.mjs --backend compose --allow-dirty --allow-non-main --out docs/e2e/records/compose
+node scripts/e2e/run.mjs --backend compose --allow-dirty --allow-non-main --out .e2e-records/compose
 ```
 
 JSON 是 YAML 的子集，此格式无须增加 YAML 依赖。静态校验：

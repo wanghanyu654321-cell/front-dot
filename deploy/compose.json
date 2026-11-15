@@ -53,8 +53,7 @@
         "dockerfile": "deploy/Dockerfile"
       },
       "environment": {
-        "FRONT_DOT_CHANNEL": "wecom",
-        "FRONT_CLAW_DATABASE_URL": "${APP_DATABASE_URL:?required}"
+        "FRONT_DOT_CHANNEL": "wecom"
       },
       "depends_on": {
         "pg": {
@@ -98,7 +97,10 @@
       },
       "restart": "unless-stopped",
       "env_file": [
-        "${ENV_FILE:?required}"
+        "${CORE_ENV_FILE:?required}"
+      ],
+      "tmpfs": [
+        "/tmp"
       ]
     },
     "admin": {
@@ -124,7 +126,14 @@
           "max-size": "10m",
           "max-file": "3"
         }
-      }
+      },
+      "read_only": true,
+      "tmpfs": [
+        "/tmp"
+      ],
+      "env_file": [
+        "${ADMIN_ENV_FILE:?required}"
+      ]
     }
   },
   "networks": {

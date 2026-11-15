@@ -28,7 +28,9 @@ if (backend === 'compose') {
     dirty: !!(await command('git', ['status', '--porcelain'])).trim() };
 }
 const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
-const out = path.resolve(output ?? `docs/e2e/records/${timestamp}`);
+const out = path.resolve(output ?? `.e2e-records/${timestamp}`);
+const documentationRecords = path.resolve('docs/e2e/records');
+if (out === documentationRecords || out.startsWith(documentationRecords + path.sep)) throw Error('record_directory_forbidden');
 await mkdir(out, { recursive: true, mode: 0o700 });
 const records = [];
 const env = { PATH: process.env.PATH, LANG: 'C.UTF-8', AUDIT_PG_ALLOW: 'isolated-synthetic' };
