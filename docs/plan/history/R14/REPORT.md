@@ -1,12 +1,12 @@
 # R14 报告
 
-时间均为 Asia/Singapore（UTC+8）。本轮于 2026-11-13 01:07 按 D143 文案要求改完并重新冻结，取代此前树 `c73248cb303d180868d17a996c97e6412e73b1ba`。未 commit、未 push、未部署、未连真实企微、未调真模型、未读环境变量与凭证、未用 sudo、未删数据、未碰共享库 `legacy-shared-pg-20261008-r1`。未读盲测留出集（blind4–blind10 及其 ctx）与任何 REVIEW.md。未改 `HANYU-DECISIONS-20261112.md`（产品经理牙已追加 D141–D143；开本改动时 sha 已是 `74ae3d3f427c447e4b704db02e58b8fd3e9b383b6358edea42712c9e4b05f352`，只核对、未写）。不宣称门③/门④达标。
+时间均为 Asia/Singapore（UTC+8）。本轮于 2026-11-13 01:07 按 D143 文案要求改完并重新冻结，取代此前树 `c73248cb303d180868d17a996c97e6412e73b1ba`。未 commit、未 push、未部署、未连真实企微、未调真模型、未读环境变量与凭证、未用 sudo、未删数据、未碰共享库 `legacy-shared-pg-20261008-r1`。未读盲测留出集与任何复审记录。未改 `HANYU-DECISIONS-20261112.md`（产品负责人已追加 D141–D143；开本改动时 sha 已是 `74ae3d3f427c447e4b704db02e58b8fd3e9b383b6358edea42712c9e4b05f352`，只核对、未写）。不宣称门③/门④达标。
 
 本轮范围：第 1、3、4 项（复合进度不进备注、否定补报剥离、过期草稿关闭），以及 D143 回「对」固定文案。第 2、5 项（D131、评测回放）未改。
 
 ## 树与补丁
 
-- 工作树：`<WORKSPACE>/fc-migration/repo-r14`，HEAD 仍为 G `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。由 R13 树 `d0cd0c8e2e8bf74fc3a64df2f41c45414227b5f5`（553 路径）起做。
+- 工作树：`<本地路径>`，HEAD 仍为 G `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`。由 R13 树 `d0cd0c8e2e8bf74fc3a64df2f41c45414227b5f5`（553 路径）起做。
 - **R14 冻结树** `336c658ad6173f23ebf27c27aa3fc59f5278b327`，**558 路径**（+5，无删除）。经临时 `GIT_INDEX_FILE`，`git add -A -- . ':!node_modules' ':!dist'` 后 `git write-tree`，不改 HEAD、不 commit。此树取代 `c73248cb…`。
 - **r14.patch**（R13→R14）：603 行，9 文件，+443 / −13。sha256 `e9cecbe56a05f95fb8397827383af4fd5fce971bbc70c257b3639fb62dd33f9c`。
 - **r14-cumulative.patch**（G→R14）：29072 行。sha256 `fc5bdb824c158f323414739bb7027693eb5567ba211c70f87f8662882f3595a4`。
@@ -24,7 +24,7 @@
 
 4. **回归保护（实现未改，只补测试）**：二选一挂起时「新增一笔」出可确认草稿，金额用刚才再报的那笔；无挂起时回复「当前没有待选择的新增或改单。没有写入。」
 
-## 新 D 号（已由产品经理牙写入决策文件，本轮未追加）
+## 新 D 号（已由产品负责人写入决策文件，本轮未追加）
 
 - **D141**：一句里同时报单并问本人进度时，拆分后进度走查询、不进备注；「报一下」等不是备注。
 - **D142**：客户名抽取前先剥离否定补报短语，再抽取客户名。
@@ -36,7 +36,7 @@
 - **完整单元**：2 failed | **1460 passed** | 3 skipped（共 1465）。失败仅两个已知 `tests/native/live-model-smoke.test.ts`。耗时 11.78s（2026-11-13 01:03:43 Asia/Singapore 起）。
 - **test:pg 三次**（`AUDIT_PG_ALLOW=isolated-synthetic`，`AUDIT_PG_URL=postgres://frontclaw@127.0.0.1:55432/postgres`，`FRONT_CLAW_PG_BIN` 指向 pg-temp 17）：均为 **22 个文件、97/97 全绿**（23.88s / 24.68s / 23.96s）。含过期回「对」的 PG 断言。结束后已停 pg-temp，55432 已关闭。未碰共享库。
 - **完整突变 18/18 全部杀死并恢复**：R11 原 7 条（M7 仍为「Tests no tests」、exit≠0 计杀死）+ R12 3 条 + R13 5 条 + R14-M1 / R14-M3 / **R14-M4 过期草稿不关闭（仍被杀掉）**。
-- **门①锁定独立再跑**（`tests/r8/r8-gate1-lock.test.ts`，`CUSTOMER_NAME_POLICY_MODE` 分别 A/B/C）：**A、B、C 均为 54/56，例外仅 C112、C113**。
+- **门①锁定独立再跑**（`tests/r8/r8-gate1-lock.test.ts`，`CUSTOMER_NAME_POLICY_MODE` 分别 A/B/C）：**A、B、C 均为 54/56，例外仅相关评测条目**。
 
 ## 未做
 

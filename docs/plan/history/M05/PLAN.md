@@ -4,7 +4,7 @@
    - 插曲：创建工作树时，shell 里残留了上一步导出的 GIT_INDEX_FILE（/tmp/m05-chk-idx），导致 worktree add 和 apply --index 写到了那个临时索引，repo-m05 自己的 index 没生成。
    - 修复：`git read-tree HEAD && git apply --cached m04-cumulative.patch`，得到 1aca630d，status 43 行与 repo-m04 一致；随后删除自己的临时文件 /tmp/m05-chk-idx。
    - repo 和 repo-m04 的 index 未受影响：status 行数分别为 15 和 43，与之前一致。
-2. **盲测集**：先冻结 `tests/role-eval/fixtures/intent-corpus-blind-m05.json`，改分类器前跑一次，结果写到 M05/blind-m05-first-run.txt。
+2. **盲测集**：先冻结私有评测语料，改分类器前跑一次，结果写到留出测试集产物。
 3. **access-policy.ts**：增加 `appointment_submit` 和 `appointment_receive`。
 4. **appointments.ts**：保留原函数，新增以下内容。
    - `parseAppointmentRequest(text, now, tz)`：解析日期（今天/明天/后天/大后天/周X/下周X/N月N日/N号）和时间（HH:MM、H点、H点半、H点MM分、中文数字、上午/中午/下午/晚上）；不带上下午时 1–7 点按下午算。顾客和项目尽量抽取，抽不到时顾客记为“未留名”。返回 request、'needs_time'、'past' 或 null。

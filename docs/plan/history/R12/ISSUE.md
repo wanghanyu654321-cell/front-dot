@@ -1,6 +1,6 @@
 # R12 议题
 
-本轮基于 R11 冻结树 `d86b3b5997dd4b7a83c7cecc59d06e851948e9cd`，在本地游离 worktree `<WORKSPACE>/fc-migration/repo-r12` 上做。不 commit、不 push、不部署，不碰共享库，不读任何 REVIEW.md，不打开 blind4–blind9。HANYU-DECISIONS 已有 22:55 开票补充且 sha 与任务书一致（`b91720c8cf931870f7277d97e7c175dcd54c0ad61b6f0a832286910d931d9dab`），本轮不追加、不覆盖。
+本轮基于 R11 冻结树 `d86b3b5997dd4b7a83c7cecc59d06e851948e9cd`，在本地游离 worktree `<本地路径>` 上做。不 commit、不 push、不部署，不碰共享库，不读任何复审记录，不打开留出测试集。HANYU-DECISIONS 已有 22:55 开票补充且 sha 与任务书一致（`b91720c8cf931870f7277d97e7c175dcd54c0ad61b6f0a832286910d931d9dab`），本轮不追加、不覆盖。
 
 ## 产品已定
 
@@ -9,5 +9,5 @@
 
 ## 验收（本轮结束时如实记录，不自报门③/④达标）
 
-tsc/build 0；单元只允许 2 个 live-model-smoke 失败；test:pg 重复 3 次，95/95 后停 pg-temp；变异杀死并恢复（去掉三词后正例必须失败；拿掉非名字词表后反例必须失败）；锁定独立再跑，目标 ≥54/56，例外 C112/C113；写出树哈希和产物 sha256。可选 test:pg M05 竞态仅测试侧可改则改。
+tsc/build 0；单元只允许 2 个 live-model-smoke 失败；test:pg 重复 3 次，95/95 后停 pg-temp；变异杀死并恢复（去掉三词后正例必须失败；拿掉非名字词表后反例必须失败）；锁定独立再跑，目标 ≥54/56，例外相关评测条目；写出树哈希和产物 sha256。可选 test:pg M05 竞态仅测试侧可改则改。
 

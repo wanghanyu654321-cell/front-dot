@@ -17,7 +17,7 @@ describe('D132 评测种子用标准行，失败进入摘要', () => {
     expect(src).toMatch(/种入失败/);
   });
 
-  it('已有「李小雪」的种子能种上；再报「客户李小雪」走二选一；摘要含种入失败字段', async () => {
+  it('已有客户种子能种上；带客户位残片先问；摘要含种入失败字段', async () => {
     const items: CorpusItem[] = [
       {
         id: 'R9SEED1',
@@ -32,7 +32,8 @@ describe('D132 评测种子用标准行，失败进入摘要', () => {
     expect(out.seed_fail.ids).toEqual([]);
     const row = out.rows[0]!;
     expect(row.seed_failed).toBe(false);
-    expect(row.choiceDraft).toBe(true);
+    // D165/D147：客户位带表外残留先问，不发能转成可确认草稿的二选一。
+    expect(row.choiceDraft).toBe(false);
     expect(row.outcome).toBe('clarify');
     const text = formatSummary(out);
     expect(text).toMatch(/种入失败\s+0 条/);

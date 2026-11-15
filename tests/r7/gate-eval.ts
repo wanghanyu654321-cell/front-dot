@@ -1,5 +1,5 @@
 /**
- * R7 三道门评测：把任意与 audit/blind*-corpus.jsonl 同格式的 jsonl 喂给员工入口。
+ * R7 三道门评测：把任意与评测语料同格式的 jsonl 喂给员工入口。
  * 模型层由配置切换（桩 / 真模型），不改代码。默认桩、不调真模型。
  * 二选一草稿计为澄清，不算执行。门③数字只记录，达标与否留给正式实测。
  * 每条记录处理延迟，汇总总 p50 / p95，以及第四道门：快通道 p95 与模型分类 p95（分别统计；达标与否待正式实测）。
@@ -160,6 +160,8 @@ async function seedEntries(w: Awaited<ReturnType<typeof world>>, entries: NonNul
       ? `${e.customer}：${e.amount}（${owner.displayName}）`
       : `${e.customer}：${e.amount}（${reporter.displayName}）`;
     const r1 = await w.call(reporter.memberId, text);
+    // D165/D139：合成种子也遵循未知客户先回是、再回对；不绕过单闸。
+    if (isNewCustomerFirstAskReply(r1)) await w.call(reporter.memberId, '是');
     const r2 = await w.call(reporter.memberId, '对');
     const snap = await w.snapshot();
     const ok = snap.entries.some((row: { customerName: string | null; status: string }) => row.customerName === e.customer && row.status === 'confirmed');

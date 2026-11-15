@@ -1,3 +1,4 @@
+import { timestampMicros } from '../../src/role-eval/pending-time.js';
 import type { SqlClient } from '../../src/role-eval/performance-postgres.js';
 
 type Row = Record<string, unknown>;
@@ -6,6 +7,7 @@ const ident = String.raw`(?:\w+\.)?\w+`;
 
 /** Executes the narrow SQL shape used by the Postgres store. Not a server. */
 export class MemorySql implements SqlClient {
+  private pendingSequence = 0n;
   private tables = new Map<string, Row[]>();
   private snapshot: Map<string, Row[]> | null = null;
   readonly advisoryLocks: unknown[][] = [];
@@ -23,7 +25,22 @@ export class MemorySql implements SqlClient {
   }
 
   async query<T = Row>(sql: string, params: readonly unknown[] = []): Promise<{ rows: T[] }> {
-    const compact = sql.replace(/\s+/g, ' ').trim();
+    let compact = sql.replace(/\s+/g, ' ').trim();
+    if (/^CREATE SEQUENCE IF NOT EXISTS front_claw_perf.pending_order_seq /.test(compact)) return { rows: [] };
+    if (compact.startsWith("SELECT nextval('front_claw_perf.pending_order_seq')")) {
+      const hours = this.rows('front_claw_perf.performance_config').find(r => r.key === params[0])?.value ?? null;
+      return { rows: [{ sequence: String(++this.pendingSequence), hours }] as T[] };
+    }
+    const sequenceInsert = /jsonb_set\(\$(\d+)::jsonb,'\{([^}]+)\}',to_jsonb\(nextval\('front_claw_perf.pending_order_seq'\)::text\)\)::text/.exec(compact);
+    if (sequenceInsert) {
+      const next = [...params], index = Number(sequenceInsert[1]) - 1, payload = JSON.parse(String(next[index]));
+      const path = sequenceInsert[2]!.split(',');
+      if (path.length === 2) payload[path[0]!][path[1]!] = String(++this.pendingSequence);
+      else payload[path[0]!] = String(++this.pendingSequence);
+      // PG 的 jsonb::text 会改变空白/键序，不能假装保留 JSON.stringify 的原字节。
+      next[index] = JSON.stringify(payload, null, 1); params = next;
+      compact = compact.replace(sequenceInsert[0], `$${index + 1}::text`);
+    }
     if (/^BEGIN$/i.test(compact)) {
       this.snapshot = new Map([...this.tables].map(([name, rows]) => [name, rows.map(row => ({ ...row }))]));
       return { rows: [] };
@@ -168,8 +185,37 @@ export class MemorySql implements SqlClient {
       const ok = owner === params[k + 1] && epoch !== undefined && Number(epoch) === params[k + 2] && until !== undefined && Number(until) > Number(params[k + 3]);
       return ok && this.matches(where.slice(0, exists.index), params, row);
     }
+    const pending = / AND NOT EXISTS \(SELECT 1 FROM ([\w.]+) other WHERE other.reporter_person_id=\$(\d+) AND other.status='pending'\)/.exec(where);
+    if (pending) {
+      if (this.rows(pending[1]!).some(r => r.reporter_person_id === params[Number(pending[2]) - 1] && r.status === 'pending')) return false;
+      where = where.replace(pending[0], '');
+    }
     return where.split(/\s+AND\s+/i).every(clause => {
       const c = clause.trim();
+      const prefix = /^starts_with\(key,\$(\d+)\)$/.exec(c);
+      if (prefix) return String(row.key).startsWith(String(params[Number(prefix[1]) - 1]));
+      const payloadEqual = /^payload_json::jsonb=\$(\d+)::jsonb$/.exec(c);
+      if (payloadEqual) {
+        const sorted = (v: unknown): unknown => Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, value]) => [k, sorted(value)])) : v;
+        return JSON.stringify(sorted(JSON.parse(String(row.payload_json)))) === JSON.stringify(sorted(JSON.parse(String(params[Number(payloadEqual[1]) - 1]))));
+      }
+      const order = /^\(payload_json::jsonb->'employeeContext'->>'pendingSequence'\)::bigint<\$(\d+)::bigint$/.exec(c);
+      if (order) {
+        const issued = JSON.parse(String(row.payload_json)).employeeContext?.pendingSequence;
+        return issued !== undefined && BigInt(issued) < BigInt(String(params[Number(order[1]) - 1]));
+      }
+      const askOrder = /^\(value::jsonb->>'issuedSequence'\)::bigint<\$(\d+)::bigint$/.exec(c);
+      if (askOrder) {
+        const issued = JSON.parse(String(row.value)).issuedSequence;
+        return issued !== undefined && BigInt(issued) < BigInt(String(params[Number(askOrder[1]) - 1]));
+      }
+      // R22：存储层时间条件，替身与 PG 的严格边界一致。
+      const time = /^(?:(\w+)::timestamptz|\(value::jsonb->>'(expiresAt|issuedAt)'\)::timestamptz)(<=|<|>)\$(\d+)::timestamptz$/.exec(c);
+      if (time) {
+        const left = timestampMicros(String(time[1] ? row[time[1]] : JSON.parse(String(row.value))[time[2]!]));
+        const right = timestampMicros(String(params[Number(time[4]) - 1]));
+        return time[3] === '<=' ? left <= right : time[3] === '<' ? left < right : left > right;
+      }
       // R2：通知状态 fence 条件（与 PG 同义）。
       const fence = /^COALESCE\(substring\((\w+) from .+\)::bigint, 0\) = \$(\d+)$/i.exec(c);
       if (fence?.[1] && fence[2]) return Number(/\|f=([0-9]{1,15})(?:\||$)/.exec(String(row[fence[1]]))?.[1] ?? 0) === params[Number(fence[2]) - 1];

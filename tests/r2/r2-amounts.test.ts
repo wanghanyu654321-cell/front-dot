@@ -62,8 +62,15 @@ describe('R5 报数入口：合法角分入账，超两位小数/0/负/上界澄
     ['张姐0.5w', '5000元'],
     ['张姐680.00元（小王）', '680元'],
     ['张姐680.5元（小王）', '680.5元'],
-    ['李阿姨今天消费一千二，算我的哦', '1200元'],
   ];
+  // R18 / D155：自然句报单不算纯标准行，离线先问、不出可确认草稿（原来这里期望 1200 元草稿）。
+  it('R18 / D155：自然句「…消费一千二，算我的」离线先问，零草稿', async () => {
+    const w = await worldM04();
+    const reply = await w.call('m-zhao', '李阿姨今天消费一千二，算我的哦');
+    expect(reply).not.toContain('还没入账');
+    expect(reply).toContain('没有写入');
+    expect((await w.snapshot()).drafts).toHaveLength(0);
+  });
   for (const [text, shown] of ok) it(`合法：${text} → 待确认 ${shown}`, async () => {
     const w = await worldM04();
     const reply = await w.call('m-zhao', text);

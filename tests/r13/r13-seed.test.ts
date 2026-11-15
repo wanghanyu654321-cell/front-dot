@@ -21,9 +21,9 @@ describe('历史客户名标准行种子', () => {
     expect(file.names).toContain('张姐');
     const raw = readFileSync(resolve(__dirname, 'fixtures/historical-customers.json'), 'utf8');
     expect(raw).toMatch(/gate1-lock-ids/);
-    expect(raw).toMatch(/仅 blind1\+blind3/);
+    expect(raw).toMatch(/仅两组早期已公开语料/);
     expect(raw).toMatch(/不读盲测留出集/);
-    expect(raw).not.toMatch(/REVIEW\.md/);
+    expect(raw).not.toMatch(/复审/);
   });
 
   it('种子写入上一营业日已确认行，今天账本在种入后即可按名单认出，且不占用今天 D131', async () => {

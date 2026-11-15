@@ -1,15 +1,15 @@
-# Front Claw 工程架构（牙牙侧，ENG-ARCH.md）
+# Front Claw 工程架构（助手A侧，ENG-ARCH.md）
 
 > 编写：2026-11-10 北京时间（UTC+8）。只读整理：没有连服务器，没有读 env 或凭据内容（文中只出现路径），没有提交。
 >
 > **依据**
-> - 仓库版源码：`/workspace/r9src/repo`（HEAD `f2a8105`，工作区干净）。
+> - 仓库版源码：`<本地路径>`（HEAD `f2a8105`，工作区干净）。
 > - 补丁：`E/step3-fix-*`。
 > - 现场日志：`E/step3r*-live-*`、`E/step4A-live-20261110`。
 > - 登记：`E/issue-register-20261110/`（PR-xx、DV-xx）。
-> - 开发总结：`E/dev-summary-20261110/CODE-CHANGES.md`（编号 A1–J）、`DEV-SUMMARY.md`（Codex牙）。
+> - 开发总结：`E/dev-summary-20261110/CODE-CHANGES.md`（编号 A1–J）、`DEV-SUMMARY.md`（助手B）。
 >
-> 简写 `E/` = `<WORKSPACE>/front-claw-evidence/`。标注：**已证实** / **推断** / **未找到证据**。
+> 简写 `E/` = `<证据目录>/`。标注：**已证实** / **推断** / **未找到证据**。
 
 ---
 
@@ -25,14 +25,14 @@
 | 门禁 v0 / v1 / v2 | 11-08 15:37 → 22:0x | `full-host-local-docker.mjs`：接受「5 挂载」或「精确 6 挂载（加只读 DB env）」，严格 0600、1000:1000 | run 14d9a83c 报 BOUNDARY_UNVERIFIED（DV-03） | **只有补丁**（`01e154db…`），没提交 |
 | 申请 v1 / v2 / v3 / **v4** | v1 11-08 22:00、v2 22:08、v3 22:12（预检 node 127）、v4 11-09 14:47，15:2x 起执行 | 打进现场 A/B，新 marker `1cb6f544` | v3 时 PATH 里没有 node（DV-01），v4 改用 Node 22.23.2 绝对路径 | 仅现场 |
 | F-B r1/r2 → r3 → r4 | 11-09 18:37 / 19:07 / 19:19，22:42 apply | 外层容器在 live 阶段**双网**（pilot 网加固定 DB 网），绑定 ID 和 MAC；docker CLI 固定路径，冻结 argv，空 env | run 0020232f 单网校验失败（DV-05）；env 注入风险（DV-14） | 现场（marker `19ac232e`），没提交 |
-| r4 现场脚本包 | 11-09 20:35–22:40 | 01–05 五段式，RUNID 绑定，严格 30 分钟，noclobber | 现场操作要能审计 | 现场和 box |
+| r4 现场脚本包 | 11-09 20:35–22:40 | 01–05 五段式，RUNID 绑定，严格 30 分钟，noclobber | 现场操作要能审计 | 现场和本机 |
 | r5 | 11-09 23:0x | 先开 store 再连企微；worker 注入 `FRONT_CLAW_DATABASE_HOST` | 构造期抛 `_URL` | 现场 `3544625f` |
 | r6 | 11-10 00:xx | 把 `pg` 及依赖 vendor 进 `stage/app/node_modules`；`classifyOriginalError` | 缺 pg（DV-06）；错误被统一脱敏（DV-24） | 现场 `958f6166` |
 | r7 | 11-10 13:18 后 | close 和 `pool.end` 幂等；加入到期 token | 正常到期被判失败（DV-07） | 现场 `3a50f880` |
 | r8 | 11-10 14:xx | transport 有界等待接网，slot 一定释放，runner 失败兜底，`final_delivery`；磁盘门槛 3→2 GiB | 接网竞态（DV-05） | 现场 `1b8507cd` |
 | r9 | 11-10 16:xx | `createFrontClawModel`（deepseek-flash） | 进程内用的是桩模型（DV-20） | 现场 **`d05d316c`（当前）** |
-| r9-reopen | 11-10 18:3x | `04-reopen-window.sh` / `05-reopen-residue.sh`，子目录 W | 同一个 D 不能重开（DV-23） | 现场和 box |
-| step4 | 11-10 20:56 | `07-pg-counts.sh`（只读计数） | 21 项验收 | 现场和 box |
+| r9-reopen | 11-10 18:3x | `04-reopen-window.sh` / `05-reopen-residue.sh`，子目录 W | 同一个 D 不能重开（DV-23） | 现场和本机 |
+| step4 | 11-10 20:56 | `07-pg-counts.sh`（只读计数） | 21 项验收 | 现场和本机 |
 | r10 草稿 | 11-10 17:40 后 | `frontClawOwnerIds` 包住 `remember` | owner 映射 | **只有补丁草稿** |
 
 ## 2. 代码结构（仓库 `<PRIVATE_ORG>/qiwe-agent`）
@@ -70,7 +70,7 @@ flowchart LR
   ST-->MIG
 ```
 
-- 测试：`tests/role-eval/*`（vitest）和 `integrations/native/*.test.mjs`（node --test）。r9 的 box 测试是 130 例：129 通过，1 跳过（CODE-CHANGES §G）。
+- 测试：`tests/role-eval/*`（vitest）和 `integrations/native/*.test.mjs`（node --test）。r9 的本机测试是 130 例：129 通过，1 跳过（CODE-CHANGES §G）。
 - `src/role-eval` 约 51 个业务文件、6000 行，不引用底座的 `../`。这是 11-06 对照 OpenDot 时的结论，**仅转引**，见 DEV-SUMMARY §1.3。
 
 ## 3. 企微智能机器人长连接通道
@@ -84,7 +84,7 @@ flowchart LR
 - **缺口**：
   - 心跳和 connected 字段没有打印，r9 首窗零流量时分不清是没人发还是没收到（DV-22）；
   - 推送和回复没有逐条日志（DV-29、PR-13、PR-17）；
-  - 迁移计划里企微**保留 SDK 长连接**；改成 OpenDot 的 IMChannel 要等备案和可信域名（`/workspace/codex-plan-review/plan.txt`）。
+  - 迁移计划里企微**保留 SDK 长连接**；改成 OpenDot 的 IMChannel 要等备案和可信域名（`<本地路径>`）。
 
 ## 4. 容器、网络与挂载门禁
 
@@ -143,7 +143,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-  participant W as 牙牙（Windows SSH）
+  participant W as 助手A（Windows SSH）
   participant S as 服务器 <SERVER_APP_DIR>
   W->>S: 01-backup（只读预检＋备份，新建 D=step3-rN-apply-时间）
   W->>S: 02-apply（git apply --check，范围核对，node --check）
@@ -200,7 +200,7 @@ gitGraph
 - **迁移的取法**：以现场 marker d05d316c 的文件清单为准，把可复用的修复（r5–r9、v2 的思路）整理成提交，或者在 OpenDot 上重新实现。r4 entry 里硬编码的 CLI 路径和网络 ID、01–05 脚本、vendored pg 都属于试点脚手架，应该丢掉或重做（DEV-SUMMARY §4.2）。
 
 ## 9. OpenDot 集成点（计划，都还**没执行**）
-OpenDot 在 box 上的副本是 `/workspace/uploads/od/OpenDot`（helsome/OpenDot）。README 写的是：复用 Pi Agent Runtime、Goal、群聊、工具授权、记忆边界。
+OpenDot 在本机上的副本是 `<本地路径>`（helsome/OpenDot）。README 写的是：复用 Pi Agent Runtime、Goal、群聊、工具授权、记忆边界。
 
 | 集成点 | 现状 | 计划做法 | 依据 |
 |---|---|---|---|

@@ -59,10 +59,12 @@ describe('R6 真实PG：009 计数与角分原子、010 重复 RAISE、只读角
     const url = await freshDatabase();
     const sql = await openSql(url);
     await migrateUp(sql.client, { apply: true });
-    expect(await schemaVersion(sql.client.query.bind(sql.client))).toBe(10);
+    expect(await schemaVersion(sql.client.query.bind(sql.client))).toBe(11);
     await rawQuery(url, `INSERT INTO ${PERFORMANCE_SCHEMA}.performance_entries
       (entry_id, store_id, business_day, customer_name, amount, amount_type, owner_person_id, owner_name, reporter_person_id, note, status, disputed, created_at, source_draft_id, source_ordinal)
       VALUES ('e-frac','s-b','2026-11-12','张姐','680.50','consultant','p-zhao','小赵','p-zhao','','confirmed',false,'2026-11-12T02:00:00.000Z','e-frac',0)`);
+    // D174：最新版本 011 先降到 010，保留原 009 角分护栏。
+    expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 11, to: 10 });
     expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 10, to: 9 });
     const before = await rawQuery(url, `SELECT amount::text AS amount, status, amount_type FROM ${PERFORMANCE_SCHEMA}.performance_entries WHERE entry_id='e-frac'`);
     expect(before[0]).toMatchObject({ amount: '680.50', status: 'confirmed', amount_type: 'consultant' });

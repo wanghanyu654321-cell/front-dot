@@ -8,7 +8,7 @@
 
 ## 基线与现有实现
 
-已在隔离仓库 `<WORKSPACE>/fc-migration/repo` 核实分支 `migration/m01`、干净工作树和 HEAD `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`（B）。B 含首片所需解析、PG store、目录和统一入口；调度方确认 c86601d 是其祖先且缺这些文件，故不以原浅克隆为开发起点。d05d316c 是现场 r9 marker，不能当 git SHA；L 补丁和 F 候选只逐文件取必要行为，缺完整源码的标未验证。来源表见 BASELINE-ALIGN.md。
+已在隔离仓库 `<本地路径>` 核实分支 `migration/m01`、干净工作树和 HEAD `f2a8105acf84ac0679b3a0f4b86c973d03e1781a`（B）。B 含首片所需解析、PG store、目录和统一入口；调度方确认 c86601d 是其祖先且缺这些文件，故不以原浅克隆为开发起点。d05d316c 是现场 r9 marker，不能当 git SHA；L 补丁和 F 候选只逐文件取必要行为，缺完整源码的标未验证。来源表见 BASELINE-ALIGN.md。
 
 现有 PG 草稿认领及 entries 事务、单人进度、SDK 权威上下文、全局消息指纹应复用。现有统一 handler 会先做全局 maintenance、仅检查 active，首片需要补对象边界、受控开关和可查原操作结果。基线 tsc 通过；全量 64 文件中 1 失败、776 用例中 2 失败（native/live-model-smoke），为调度方提供的已有失败。
 

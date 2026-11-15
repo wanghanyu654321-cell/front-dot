@@ -66,11 +66,11 @@ it('真实PG：M01–M07 流程造出的 v7 库 → up（回填）→ down → u
   expect(statuses).toContain('pending');
   const sql = await openSql(url);
   // dry-run：真实执行后整体回滚，库不变。
-  expect(await migrateUp(sql.client, { apply: false })).toMatchObject({ from: 7, to: 10, applied: true, dryRun: true });
+  expect(await migrateUp(sql.client, { apply: false })).toMatchObject({ from: 7, to: 11, applied: true, dryRun: true });
   expect(await schemaVersion(sql.client.query.bind(sql.client))).toBe(7);
   expect((await columnsOf(url)).filter(c => c.startsWith('delivery_'))).toEqual([]);
-  expect(await migrateUp(sql.client, { apply: true })).toMatchObject({ from: 7, to: 10, applied: true });
-  expect(await migrateUp(sql.client, { apply: true })).toMatchObject({ from: 10, to: 10, applied: false });
+  expect(await migrateUp(sql.client, { apply: true })).toMatchObject({ from: 7, to: 11, applied: true });
+  expect(await migrateUp(sql.client, { apply: true })).toMatchObject({ from: 11, to: 11, applied: false });
   const first = await deliveryRows(url);
   for (const row of first) expectParity(row);
   const atLatest = await checksums(url);
@@ -80,7 +80,8 @@ it('真实PG：M01–M07 流程造出的 v7 库 → up（回填）→ down → u
   const explain = (await c.query(`EXPLAIN SELECT * FROM front_claw_perf.performance_notifications WHERE delivery_due_at <= $1::timestamptz ORDER BY delivery_due_at`, [new Date(T0).toISOString()])).rows.map(r => r['QUERY PLAN']).join('\n');
   await c.end();
   expect(explain).toContain('performance_notifications_due_idx');
-  // 降档一次一版：10→9→8→7。
+  // D174 新增 011；降档一次一版：11→10→9→8→7。
+  expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 11, to: 10, applied: true });
   expect(await migrateDown(sql.client, { apply: false })).toMatchObject({ from: 10, to: 9, dryRun: true });
   expect(await schemaVersion(sql.client.query.bind(sql.client))).toBe(10);
   expect(await migrateDown(sql.client, { apply: true })).toMatchObject({ from: 10, to: 9, applied: true });
@@ -158,7 +159,7 @@ it('真实PG：最新库（v10，含 008 投递列与 010 来源草稿）上应�
   await rawQuery(a.url, REPAIR_MALFORMED); await rawQuery(b.url, REPAIR_MALFORMED);
   const sa = await openSql(a.url); await migrateUp(sa.client, { apply: true }); await sa.close(); await a.db.close();
   const v8 = await open(a.url);
-  expect(v8.schemaVersion).toBe(10);
+  expect(v8.schemaVersion).toBe(11);
   expect(b.db.schemaVersion).toBe(7);
   const strip = (rows: Record<string, unknown>[]) => rows.map(r => ({ id: r.notification_id, status: r.status }));
   for (const offset of [0, 120_000, 3_600_000]) {
@@ -202,7 +203,7 @@ it('真实PG竞态：新库上 6 个连接池同时 schema-up、6 个实例同�
       Promise.all(Array.from({ length: 6 }, () => open(url))),
     ]);
     expect(ups.filter(u => u.applied), `round ${round}`).toHaveLength(1);
-    expect(await rawQuery(url, `SELECT version FROM front_claw_perf.schema_migrations ORDER BY version`)).toEqual([{ version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }]);
+    expect(await rawQuery(url, `SELECT version FROM front_claw_perf.schema_migrations ORDER BY version`)).toEqual([{ version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }]);
     await Promise.all([...pools.map(p => p.close()), ...opens.map(o => o.close())]);
   }
   // 已应用的 008 被改过（校验和不同）→ 拒绝，不静默重跑。

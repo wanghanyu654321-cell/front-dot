@@ -8,6 +8,8 @@
 /** 服务项目白名单：这些词里的「补」不是补报。 */
 export const PROJECT_WHITELIST_FOR_MAKEUP = /补水|面部|肩颈|头皮|足部|身体|美甲|美睫|美容|按摩|推拿|护肤|皮肤|清洁|美白|紧致|祛痘|拔罐|艾灸|理疗|养生/;
 
+const STRUCTURAL_NEGATED_MAKEUP = /(?:不是|不算|不用|无需|没有|并非|不|没|别|非(?!常)|勿)[^，,。；;!?！？\n]{0,8}?(?:补(?:报|记|单|录|上|登)|昨天|昨日|昨儿|昨晚|前天|前儿|大前天|上周|上星期|上个?月|之前)/g;
+
 const NEG = String.raw`(?:不是|并非|并不是|没有|没在|不算|不属于|别当|别当成|不用当|不要当|别算|勿当|勿算|非(?!常))`;
 const FILL = String.raw`(?:在|的|成|作|为|算|是|属于|做|事后|那种|这种|那样|这样|那种的|昨天|昨日|昨儿|昨晚|前天|之前|上周|上个?月|今天|今日)`;
 const MAKEUP = String.raw`(?:补报|补录|补登|补单|后补|补上|补记|漏报|漏记|漏登|漏了的|漏的|(?:之前的|昨天的)(?:那种)?(?:补|漏)?(?:报|录|登|单|记)?)`;
@@ -27,13 +29,13 @@ export function findNegatedMakeupSpans(text: string): { start: number; end: numb
   if (!text) return [];
   const src = flatKeep(text);
   const out: { start: number; end: number; text: string }[] = [];
-  const re = new RegExp(SPAN.source, 'g');
+  const re = new RegExp(`(?:${STRUCTURAL_NEGATED_MAKEUP.source})|(?:${SPAN.source})`, 'g');
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
     const frag = m[0];
     const after = src.slice(m.index + frag.length, m.index + frag.length + 2);
     // 「不用补水」：否定 + 补水，项目白名单优先。
-    if (PROJECT_WHITELIST_FOR_MAKEUP.test(frag) || PROJECT_WHITELIST_FOR_MAKEUP.test(frag + after)) continue;
+    if (/补$/.test(frag) && PROJECT_WHITELIST_FOR_MAKEUP.test(frag + after)) continue;
     // 「不是补充说明」类：补后面跟的不是补报义素且不是句末/姓名边界，已由 MAKEUP_SHORT 的 (?!…) 挡。
     out.push({ start: m.index, end: m.index + frag.length, text: frag });
     if (m[0].length === 0) re.lastIndex++;

@@ -19,7 +19,7 @@
 6. **授权交集**：平台能力只作为 M03 `decideAccess` 的 `platform` 层（已有）；适配器不碰账本写接口，所有业务都经 handler。
 7. **删除冗余（列证据后删，只删本工作树）**：
    - `appointments.ts` 的 `buildReminderPayload` + `ReminderPayload`：M05 写来“只构造不发送”的载荷；M06 起真实发送走 `wecom-bot-sender.notify`（自己组帧）。证据：`rg buildReminderPayload` 只有定义和 `tests/role-eval/appointment-m05.test.ts:46` 一处测试引用，src/integrations/examples 无引用。删后把该测试改为断言提醒正文。
-   - **不删**：`integrations/native/**`、`native-bot-*`、`wecom-bot-pilot.ts`——它们是旧 Native 宿主的现行入口/回滚制品（MERGED：“停消费后才切回兼容制品”），`native-bot-execution.ts` 被 `integrations/native/scheduler-targeted.test.mts` 使用。Fable 骨架的 `admission-shim`（布尔准入）和 `task-dedup`（进程内 Map）不在仓库里，不拷入，由 M03 策略和 PG 租约替代。
+   - **不删**：`integrations/native/**`、`native-bot-*`、`wecom-bot-pilot.ts`——它们是旧 Native 宿主的现行入口/回滚制品（MERGED：“停消费后才切回兼容制品”），`native-bot-execution.ts` 被 `integrations/native/scheduler-targeted.test.mts` 使用。早期方案 骨架的 `admission-shim`（布尔准入）和 `task-dedup`（进程内 Map）不在仓库里，不拷入，由 M03 策略和 PG 租约替代。
 8. **测试**：单元（MemorySql + 假宿主 + 假企微客户端）：契约、默认关、钩子文件（临时副本打补丁后真实导入）、会话隔离、权限交集/撤权、双实例同帧、取消三态、关停、Mem0/goal-run 静态检查。PG（PG17 临时，非线上）：入口→适配器→handler→隔离 PG→回复记录器；两个进程级实例抢租约、到期接管、旧持有者停消费；双调度一笔；消费中崩溃（不释放租约）→ 新实例到期接管 → 同 msgid 重放不重复入账；撤权与消息并发。变异检查。
 
 ## 新默认（REPORT §0 列全）

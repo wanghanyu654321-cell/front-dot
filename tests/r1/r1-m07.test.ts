@@ -5,7 +5,7 @@ import { CONSUMER_LEASE_KEY } from '../../src/opendot/consumer-lease.js';
 import { startFrontClawHook } from '../../integrations/opendot-front-claw/opendot-src/front-claw-hook.js';
 import { fakeHost, manualClock, memoryWorld, offlineChannels, opIdOf } from '../opendot/fixture-m07.js';
 
-/** R1 复现测试（由 Codex牙 audit-m07-ownership 反例取反）。 */
+/** R1 复现测试（由 助手B audit-m07-ownership 反例取反）。 */
 const sheet = '12号测试B店\n560（小赵）';
 async function start(world: Awaited<ReturnType<typeof memoryWorld>>, clock: ReturnType<typeof manualClock>, owner: string) {
   const channels = offlineChannels();

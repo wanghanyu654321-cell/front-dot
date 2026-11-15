@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 /**
  * R8（D125）：标准行快通道的唯一语法。
  *
@@ -23,6 +26,7 @@ import { customerNameLooksContaminated } from './negated-makeup.js';
 import { stripFixedNegatedMakeup } from './negated-makeup-fixed.js';
 import { isWhitelistedRemark, REMARK_DRAFT_POLICY } from './remark-whitelist.js';
 import { stripTrailingCourtesy } from './remark-courtesy.js';
+import { matchesCustomerNameStructure } from './customer-name-structure.js';
 
 export const normalizeReportText = (text: string): string => text.normalize('NFKC');
 
@@ -37,7 +41,10 @@ export const CUSTOMER_HONORIFIC = new RegExp(`^[\\u4e00-\\u9fa5](?:${HONORIFIC})
  * 尾部是「姓+称谓」的（「今天的钱姐」「昨天周老师」）仍走原口径，日期前缀由 D124 处理；
  * 「客户李小雪」「丽」等既有可解析写法只要不含非名字词就保持可解析。
  */
-export const NOT_CUSTOMER_NAME = /一共|总共|合计|总计|共计|总额|加起来|目标|本月|本周|这周|刚才|全部|今天|今日|昨天|昨晚|昨日|前天|明天|明日|后天|今晚|今早|上周|下周|这个月|上个月|上月|当月|查询|查一下|查下|汇总|排名|多少|来做|过来|到店|开始|退款|改成|改到|改为|改账|大概|大约|左右|出头|撤回|撤销|更正|亏了|赔了|退了|减了|少了|多了|付了|收了|将近|不到|几乎|差不多|写成|订正|瞅一|列一|约一|记成|当成|算成|重新/;
+const CUSTOMER_NOT_NAME_CONFIG = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../config/customer-not-name.json'), 'utf8')) as { frozen: boolean; words: string[] };
+export const CUSTOMER_NOT_NAME_WORDS: readonly string[] = Object.freeze([...CUSTOMER_NOT_NAME_CONFIG.words]);
+const NON_SUMMARY_CUSTOMER_WORDS = /整单|储值卡|目标|本月|本周|这周|刚才|全部|今天|今日|昨天|昨晚|昨日|前天|明天|明日|后天|今晚|今早|上周|下周|这个月|上个月|上月|当月|查询|查一下|查下|汇总|排名|多少|来做|过来|到店|开始|退款|改成|改到|改为|改账|大概|大约|左右|出头|撤回|撤销|更正|亏了|赔了|退了|减了|少了|多了|付了|收了|将近|不到|几乎|差不多|写成|订正|瞅一|列一|约一|记成|当成|算成|重新/;
+export const NOT_CUSTOMER_NAME = new RegExp([NON_SUMMARY_CUSTOMER_WORDS.source, ...CUSTOMER_NOT_NAME_WORDS.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))].join('|'));
 const HONORIFIC_SUFFIX = new RegExp(String.raw`[\u4e00-\u9fa5](?:${HONORIFIC})$`);
 
 /** 客户栏是否可当作名字。含非名字词的片段不认；尾部称谓走原口径。 */
@@ -72,7 +79,8 @@ export function isOpenedSelfCustomerName(raw: string): boolean {
   if (NOT_CUSTOMER_NAME.test(name)) return false;
   if (/^(?:我|你|他|她|它|本人|咱)$/.test(name)) return false;
   // 祈使/动作前缀（「把许姐680」是改账，不是客户叫「把许姐」）
-  if (/^(?:把|将|帮|请|替|给|用|找|看|查|改|写|列|约|瞅|订)/.test(name)) return false;
+  // D170/D173：配置姓氏＋名的完整形态不能被动作首字抢先拒收；仍须经过 D152、非名字表和名单。
+  if (/^(?:把|将|帮|请|替|给|用|找|看|查|改|写|列|约|瞅|订)/.test(name) && !matchesCustomerNameStructure(name)) return false;
   return /^[\u4e00-\u9fa5]{2,4}$/.test(name); // D138-open
 }
 
@@ -91,7 +99,7 @@ export function openedSelfAmountOk(name: string, amountText: string): boolean {
 }
 
 
-/** D122：标准行无单位小数政策。产品经理牙 21:30 已定，集中在这一处。 */
+/** D122：标准行无单位小数政策。产品负责人 21:30 已定，集中在这一处。 */
 export const STANDARD_DECIMAL_POLICY = {
   /** 整数部分小于此值的无单位小数 → 追问「是 X 万吗」。 */
   askIfIntegerPartBelow: 100,
@@ -110,14 +118,44 @@ const CN_TERM = String.raw`[零〇一二两三四五六七八九十百千万]+(?
 const TERM = String.raw`(?:${ARABIC_TERM}|${CN_TERM})`;
 const AMOUNT = String.raw`(${TERM}(?:\s*[+＋]\s*${TERM})*)`;
 const EMPLOYEE = String.raw`[（(]\s*([^（）()]{1,16}?)\s*[）)]`;
+/** D171/D153：只读取标准行客户位；解析拒收非名字时也能给出同一个通用先问。 */
+export function hasNonCustomerStandardLabel(line: string): boolean {
+  const match = new RegExp(String.raw`^([^\d\s()（）:：+＋.\-−－﹣负¥￥]+?)\s*[:：]?\s*${AMOUNT}(?:\s*${EMPLOYEE})?\s*(.*)$`).exec(line);
+  return !!match?.[1] && CUSTOMER_NOT_NAME_WORDS.some(word => match[1]!.includes(word));
+}
 const MULTI_EMPLOYEE = /[/／、,，&]|或/;
-/** 行首装饰：【今日报数】、序号、列表短横。 */
-const LINE_PREFIX = /^(?:【[^】]{1,12}】\s*|(?:今日报数|今日报单|今天报数|报个数|报数|报单)\s*[:：]?\s*|\d+\s*[.、．)]\s*|[-—–•*]\s*|[①②③④⑤⑥⑦⑧⑨⑩]\s*)/;
+/** 行首列表记号：序号、列表短横、圈号（D125 多行清单格式，不是前缀词）。 */
+const LINE_PREFIX = /^(?:\d+\s*[.、．)]\s*|[-—–•*]\s*|[①②③④⑤⑥⑦⑧⑨⑩]\s*)/;
+
+/**
+ * R18 / D158：行首前缀只认 config/line-prefix-fixed.json 的两张固定表（标签、寒暄＋D135 客套），由本语法来认。
+ * 不做模糊匹配、不做泛化；表外前缀一律不剥（后续按不纯先问）。
+ */
+const LINE_PREFIX_CONFIG = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../config/line-prefix-fixed.json'), 'utf8')) as { labels: string[]; greetings: string[] };
+const COURTESY_CONFIG = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../config/remark-courtesy.json'), 'utf8')) as { courtesy: string[] };
+const escapeRe = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const byLengthDesc = (ws: readonly string[]) => [...ws].sort((a, b) => b.length - a.length).map(escapeRe).join('|');
+export const LINE_PREFIX_LABELS: readonly string[] = Object.freeze([...LINE_PREFIX_CONFIG.labels]);
+export const LINE_PREFIX_GREETINGS: readonly string[] = Object.freeze([...LINE_PREFIX_CONFIG.greetings, ...COURTESY_CONFIG.courtesy]);
+/** D165：固定标签仅在分隔后剥离；【标签】本身算分隔。 */
+const LABEL_PREFIX = new RegExp(`^(?:【(?:${byLengthDesc(LINE_PREFIX_LABELS)})】[:：，,\\s]*|(?:${byLengthDesc(LINE_PREFIX_LABELS)})[:：，,\\s]+)`);
+const GREETING_PREFIX = new RegExp(`^(?:(?:${byLengthDesc(LINE_PREFIX_GREETINGS)})+[:：，,\\s]+)+`);
+
+/** D166：只剥完整行尾表情簇；剩在客户/金额中间的由 D152 拒收。 */
+const EMOJI_CLUSTER = String.raw`(?:\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})*(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})*)*|\p{Regional_Indicator}{2})`;
+export function stripTrailingReportEmoji(text: string): string {
+  return text.replace(new RegExp(String.raw`(?:\s*${EMOJI_CLUSTER})+\s*$`, 'u'), '').trimEnd();
+}
+export function containsReportEmoji(text: string): boolean {
+  return /[\p{Extended_Pictographic}\p{Regional_Indicator}\u200D\uFE0F]/u.test(text);
+}
 
 export type StandardAskReason = 'negation' | 'ask_wan' | 'fraction' | 'vague_amount' | 'hedge' | 'not_closed' | 'multi_employee' | 'alternatives' | AmountIssue;
 
 export interface StandardEntry {
   customer: string | null;
+  /** D161：分号段自己的 D101/D164 抬头，不能被别段门店覆盖。 */
+  storeName?: string | null;
   amount: number;
   employeeName: string;
   note: string;
@@ -514,8 +552,13 @@ function expand(customer: string | null, amountText: string, employeeName: strin
   return { status: 'ok', entries, remark: kept };
 }
 
-function stripLinePrefix(line: string): string {
+export function stripLinePrefix(line: string): string {
   let t = line.trim();
+  // R18 / D158：先剥固定寒暄（整段），再剥固定标签；都只认表内词。
+  const g = GREETING_PREFIX.exec(t);
+  if (g && t.slice(g[0].length).trim()) t = t.slice(g[0].length).trim();
+  const l = LABEL_PREFIX.exec(t);
+  if (l && t.slice(l[0].length).trim()) t = t.slice(l[0].length).trim();
   // 最多剥一层装饰前缀，避免把「1.2万」的 1. 当序号。
   const m = LINE_PREFIX.exec(t);
   if (!m) return t;
@@ -530,7 +573,7 @@ function stripLinePrefix(line: string): string {
  */
 export function parseStandardLine(line: string, context: 'standard-line' | 'free' = 'standard-line'): StandardLineResult {
   // R14-negated-makeup-strip：客户名抽取前先剥离否定补报短语。
-  const text = stripNegatedMakeupPhrases(stripLinePrefix(normalizeReportText(line).trim()));
+  const text = stripNegatedMakeupPhrases(stripLinePrefix(stripTrailingReportEmoji(normalizeReportText(line).trim())));
   if (!text) return { status: 'none' };
   if (/[：:]/.test(text)) {
     const colon = /^(.+?)[：:]\s*/.exec(text);
@@ -642,6 +685,16 @@ export function parseHeaderSplit(line: string, businessDay: string): { businessD
   return null;
 }
 
+/** D164：不把任意括号内容当作店名，必须是日期或以「店」结尾的单一店名。 */
+export function parseBracketReportHeader(raw: string, businessDay: string): { businessDay: string; storeName: string | null } | null {
+  const h = parseHeaderSplit(raw, businessDay);
+  if (h && !h.rest && (!h.storeName || /^[^\s【】\[\]，,:：;；]+店$/.test(h.storeName))) {
+    return { businessDay: h.businessDay, storeName: h.storeName };
+  }
+  if (/^[^\s【】\[\]，,:：;；]+店$/.test(raw)) return { businessDay, storeName: raw };
+  return null;
+}
+
 export function parseHeader(line: string, businessDay: string): { businessDay: string; storeName: string | null } | null {
   const split = parseHeaderSplit(line, businessDay);
   return split ? { businessDay: split.businessDay, storeName: split.storeName } : null;
@@ -678,13 +731,39 @@ function isHeaderOnlyLine(line: string, businessDay: string): boolean {
  * 整段话按同一份语法解析。有标题用标题营业日；无标题按给定营业日。
  * 任一行是否定/约数/小额小数 → ask。标题上的营业日按标题解析（可与参考日不同）；非今天拒在入口做。
  */
-export function tryStandardReport(text: string, businessDay: string, opts?: { requireHeader?: boolean }): StandardReportResult {
+export function tryStandardReport(text: string, businessDay: string, opts?: {
+  requireHeader?: boolean;
+  /** D161 单闸用 free 读取分段结构；其金额授权必须另过 standard-line amount-guard。其他调用默认标准行口径。 */
+  amountContext?: 'standard-line' | 'free';
+}): StandardReportResult {
   if (typeof text !== 'string') return { status: 'none' };
   const raw = normalizeReportText(text);
-  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  // D161：每段必须恰好一笔；不滤空段，不允许半张清单或自然抽取重排。
+  if (/[；;]/.test(raw)) {
+    const parts = raw.split(/[；;]/);
+    if (parts.length > 50 || parts.some(p => !p.trim())) return { status: 'incomplete' };
+    const entries: StandardEntry[] = [];
+    let day: string | null = null;
+    let storeName: string | null = null;
+    for (const part of parts) {
+      const result = tryStandardReport(part, businessDay, opts);
+      if (result.status === 'ask') return result;
+      if (result.status !== 'complete' || result.report.entries.length !== 1) return { status: 'incomplete' };
+      if (day && day !== result.report.businessDay) return { status: 'incomplete' };
+      day = result.report.businessDay;
+      storeName ??= result.report.storeName;
+      entries.push(...result.report.entries.map(entry => ({ ...entry, ...(result.report.storeName ? { storeName: result.report.storeName } : {}) })));
+    }
+    return { status: 'complete', report: { businessDay: day!, storeName, entries } };
+  }
+  // D165：先剥表内前缀，再拆行；标签后的换行也是分隔。
+  const lines = stripLinePrefix(raw.trim()).split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   if (!lines.length || lines.length > 50) return { status: 'none' };
   const first = lines[0]!;
-  const header = parseHeaderSplit(first, businessDay);
+  // D164：【…】只认表内标签或 D101 日期/日期＋店名/店名抬头。
+  const bracket = /^【([^】]+)】\s*[:：，,]?\s*(.*)$/.exec(first);
+  const bracketHeader = bracket ? parseBracketReportHeader(bracket[1]!, businessDay) : null;
+  const header = bracketHeader ? { ...bracketHeader, rest: bracket![2]! } : parseHeaderSplit(first, businessDay);
   if (opts?.requireHeader && !header) return { status: 'none' };
   const body = header
     ? [...(header.rest ? [header.rest] : []), ...lines.slice(1)]
@@ -700,7 +779,7 @@ export function tryStandardReport(text: string, businessDay: string, opts?: { re
   let anyAsk: StandardLineAsk | null = null;
   for (const line of body) {
     if (isHeaderOnlyLine(line, businessDay)) continue;
-    const parsed = parseStandardLine(line, 'standard-line');
+    const parsed = parseStandardLine(line, opts?.amountContext ?? 'standard-line');
     if (parsed.status === 'ask') { anyAsk = parsed; break; }
     if (parsed.status === 'none') {
       // R11：已有报单行之后，确定的改账分句不当成整单失败，记到 compound 里由入口处理。

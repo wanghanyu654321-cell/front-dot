@@ -1,8 +1,10 @@
 /**
  * D140：客户名政策 A/B/C（默认 C，见 config/customer-name-policy.json）。
- * 只作用于「不带括号、也不是姓＋称谓」的名字；带括号的标准行和「周老师」等称谓名不走本政策。
+ * D165：带不带员工括号的客户位使用相同三档；姓＋称谓保持 D125 正向形态。
  * 判定在员工入口、完整解析之后：不缩小 parse。命中后或直接出草稿，或只问「是新客户「X」吗？」且不附可确认草稿（D139 修订）。
  */
+import { matchesCustomerNameStructure } from './customer-name-structure.js';
+export { matchesCustomerNameStructure } from './customer-name-structure.js';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,7 +86,6 @@ export function isHonorificCustomerName(name: string): boolean {
 export function isPolicySubject(item: { self?: boolean | undefined; customer?: string | null }): boolean {
   const name = (item.customer ?? '').normalize('NFKC').trim();
   if (!name) return false;
-  if (!item.self) return false;
   if (isHonorificCustomerName(name)) return false;
   return true;
 }
@@ -94,25 +95,10 @@ export function hitsNotCustomerName(name: string): boolean {
   return !n || NOT_CUSTOMER_NAME.test(n);
 }
 
-/** B 模式正向格式：百家姓＋1–2 字，或 小/阿/老＋1 字；冲突表整词排除。 */
+/** B 模式正向格式额外排除冲突整词和非名字词；不改变 A/C 的 D139 三档口径。 */
 export function matchesPositiveNameFormat(name: string): boolean {
   const n = name.normalize('NFKC').replace(/\s+/g, '').trim();
-  if (!n || !/^[\u4e00-\u9fa5]+$/.test(n)) return false;
-  const cfg = loadPolicy();
-  if (cfg.conflictWords.has(n)) return false;
-  if (hitsNotCustomerName(n)) return false;
-  if (n.length === 2 && cfg.nicknamePrefixes.includes(n[0]!) && /^[\u4e00-\u9fa5]$/.test(n[1]!)) return true;
-  for (const compound of cfg.compounds) {
-    if (n.startsWith(compound)) {
-      const rest = n.slice(compound.length);
-      if (rest.length >= 1 && rest.length <= 2 && /^[\u4e00-\u9fa5]+$/.test(rest)) return true;
-    }
-  }
-  if (n.length >= 2 && n.length <= 3 && cfg.singles.has(n[0]!)) {
-    const rest = n.slice(1);
-    if (rest.length >= 1 && rest.length <= 2 && /^[\u4e00-\u9fa5]+$/.test(rest)) return true;
-  }
-  return false;
+  return !loadPolicy().conflictWords.has(n) && !hitsNotCustomerName(n) && matchesCustomerNameStructure(n);
 }
 
 export function decideOpenedCustomerName(
@@ -169,10 +155,10 @@ export function newCustomerAskReply(names: readonly string[]): string {
   return `Front Claw：是新客户${names.map(n => `「${n}」`).join('、')}吗？`;
 }
 
-/** 只认「是」「是的」等；「对」不算（产品：员工回「是」以后才出草稿，草稿仍要回「对」才入账）。 */
+/** D172：肯定追问只出草稿，入账仍要再回一次「对」。 */
 export function isYesNewCustomerReply(text: string): boolean {
   const t = text.normalize('NFKC').trim();
-  return /^(是的?|是呀|是啊|是呢)[。．\.!！]?$/.test(t);
+  return /^(是的?|是呀|是啊|是呢|对的?)[。．\.!！]?$/.test(t);
 }
 
 export function notCustomerNameAskReply(names: readonly string[]): string {

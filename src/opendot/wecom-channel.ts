@@ -9,7 +9,7 @@ import { WECOM_BOT_ID_ENV, WECOM_BOT_SECRET_ENV } from './host-contract.js';
 
 /** 已认证 SDK 事件里的单聊文本（帧解析复用 normalizeBotFrame：群聊、缺字段一律丢弃）。 */
 export interface InboundText {
-  reqId: string; botId: string; corpId?: string; memberId: string; messageId: string; text: string;
+  reqId: string; botId: string; corpId?: string; memberId: string; messageId: string; text: string; createTime?: number;
 }
 export type ChannelSendState = BotSendOutcome['state'];
 type OwnedClient = Pick<WSClient, 'on' | 'off' | 'isConnected' | 'reply' | 'sendMessage'>;
@@ -47,7 +47,7 @@ export function createWecomLongConnectionChannel(options: { client: OwnedClient;
         try {
           const event = normalizeBotFrame(structuredClone(frame));
           if (event.botId !== botId || event.action.kind !== 'text') { dropped++; return; }
-          onText({ reqId: event.reqId, botId: event.botId, ...(event.corpId !== undefined ? { corpId: event.corpId } : {}), memberId: event.memberId, messageId: event.messageId, text: event.action.text });
+          onText({ reqId: event.reqId, botId: event.botId, ...(event.corpId !== undefined ? { corpId: event.corpId } : {}), memberId: event.memberId, messageId: event.messageId, text: event.action.text, ...(event.createTime !== undefined ? { createTime: event.createTime } : {}) });
         } catch { dropped++; }
       };
       client.on('message.text', listener as never);

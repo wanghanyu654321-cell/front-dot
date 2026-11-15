@@ -1,7 +1,7 @@
 # M08 Issue：两库迁移、重入与保全新业务的回退（仅离线）
 
-时间：2026-11-11 北京时间（UTC+8）。工作树 <WORKSPACE>/fc-migration/repo-m08（游离，基于 M07 树 d95be9f0，独立索引）。
-依据：MERGED.md §M08、§9（停删命令只列不执行）、合审-08/09、T02/T17；Codex牙 SLICES S08；M06 报告的 schema 决定（状态文本编码保留，正式列+due 索引在 M08 迁移）。
+时间：2026-11-11 北京时间（UTC+8）。工作树 <本地路径>，基于 M07 树 d95be9f0，独立索引）。
+依据：MERGED.md §M08、§9（停删命令只列不执行）、合审-08/09、T02/T17；助手B SLICES S08；M06 报告的 schema 决定（状态文本编码保留，正式列+due 索引在 M08 迁移）。
 
 ## 现状（本机可核实）
 - PG 业务库只有一个迁移 `migrations/007_front_claw_perf.sql`（schema `front_claw_perf`，10 张表，全部 CREATE IF NOT EXISTS），启动时 `migratePerformance` 逐句执行，**无版本表、无 advisory lock**（M07 已测出并发首次建表会撞 23505）。
@@ -9,7 +9,7 @@
 - M06 出站箱状态写在 `performance_notifications.status` 文本里（`pending|<到期>|<阶段>|a=|r=|tok=|by=|err=`），到期条件 `split_part(status,'|',2) <= now`，没有索引。
 - M03 `updateAccessPolicy(expectedVersion=null)` 在策略行不存在时 `FOR UPDATE` 锁不到行，两写者可都成功（后写覆盖）。
 - 旧业务数据：MERGED §9 指历史库 `legacy_appointment_db` 的 schema `front_claw_perf`（在共用 PG 上）。**本机没有任何真实副本**；只能用合成数据（M01–M07 流程产生）验证。
-- OpenDot 底座 SQLite（`/workspace/uploads/od/OpenDot/src/db.ts:149` CURRENT_SCHEMA_VERSION=107；:484–507 启动时自迁移，v39+ 先 `VACUUM INTO` 备份，拒绝降级）。Front Claw 不读不写它；它与业务 PG 分开迁移。
+- OpenDot 底座 SQLite（`<本地路径>` CURRENT_SCHEMA_VERSION=107；:484–507 启动时自迁移，v39+ 先 `VACUUM INTO` 备份，拒绝降级）。Front Claw 不读不写它；它与业务 PG 分开迁移。
 - 迁移编号：本仓只有 007；MERGED 要求保留旧 001–006 边界。新编号用 008（线上实际链未核实）。
 - 线上 PG 版本：**未知，待确认**。本机测试用 PG17 用户态临时集群，**不是线上版本**。
 

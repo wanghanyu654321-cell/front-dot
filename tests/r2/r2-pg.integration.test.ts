@@ -54,7 +54,8 @@ it('R2-PG-p1（入账门暂停点）：A 停在提交前，B 撤权/停用提交
     if (change === 'deactivate_actor') await admin.store.savePerson(wangYj);
     if (change !== 'revoke' && change !== 'bump_version' && change !== 'deactivate_actor') await admin.store.savePerson(zhao);
     expect(await w.call('m-wang-yj', '对'), change).toContain('已入账');
-    await w.call('m-wang-yj', '对'); // 重复确认：没有待确认草稿，不会再入账
+    // R18 / D160：紧接着重复确认只回「这笔已经入账了，不用重复确认。」，不再入账。
+    expect(await w.call('m-wang-yj', '对'), change).toBe('Front Claw：这笔已经入账了，不用重复确认。');
     expect(await entriesOf(url, draftId), change).toBe(1);
     expect((await rawQuery(url, `SELECT count(*)::int AS n FROM front_claw_perf.performance_entries WHERE amount=560`))[0]!.n, change).toBe(1);
     await db.close(); await admin.close();

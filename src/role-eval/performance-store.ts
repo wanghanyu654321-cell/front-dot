@@ -1,3 +1,4 @@
+import { sequenceBefore, type PendingArrival } from './pending-order.js';
 import { createHash } from 'node:crypto';
 import { assertStatus, bumpFence, decodeStatus, dueRaw, encodeStatus, outboxManaged, resultFenceHolds, type DeliveryMeta } from './notification-status.js';
 import { assertWritableConfigKey } from './protected-config.js';
@@ -146,6 +147,11 @@ export interface EmployeeDraftContext {
   itemsDigest?: string;
   /** M02：同店代报（括号员工不是发送人）。 */
   proxy?: boolean;
+  /** D183：本项曾替换旧项（包括过期项）；保留平台到达时间下界，严格比较覆盖全部报单。 */
+  replacedPending?: boolean;
+  reportedAt?: string;
+  pendingSequence?: string;
+  platformIssuedAt?: string;
 }
 
 export interface ReportPayload {
@@ -306,7 +312,15 @@ export interface EntryFilter {
 export interface WriteFence { key: string; owner: string; epoch: number; nowMs: () => number }
 export class FencedWriteRejected extends Error { constructor() { super('fenced_write_rejected'); this.name = 'FencedWriteRejected'; } }
 
+export interface PendingConditions { expiredAt?: string; arrivedAt?: string; unexpiredAt?: string; arrivedSequence?: string }
+export interface PendingReportWrite {
+  reporterPersonId: string; at: string; draft?: Draft; ask?: { key: string; value: string };
+  expectedAsk?: { key: string; value: string; arrivedSequence: string };
+}
+export interface PendingReportResult { saved: boolean; drafts: Draft[]; asks: string[] }
 export interface PerformanceStore {
+  capturePendingArrival(): Promise<PendingArrival>;
+  replacePendingReport(write: PendingReportWrite, fence?: WriteFence): Promise<PendingReportResult>;
   savePerson(person: Person): Promise<void>;
   getPerson(personId: string): Promise<Person | null>;
   getPersonByAccount(accountId: string): Promise<Person | null>;
@@ -329,9 +343,9 @@ export interface PerformanceStore {
   listStoreTargets(storeId?: string): Promise<StoreTarget[]>;
   commitConfirmingStoreTarget(draft: Draft, target: StoreTarget, expectedBefore: { amount: number; setBy: string; updatedAt: string } | null, guard?: CommitGuard): Promise<LedgerCommit>;
   /** R3：options.fence 存在 → 经 fencedWrite（租约不符抛 FencedWriteRejected，不写）。 */
-  saveDraft(draft: Draft, options?: { ifAbsent: boolean; fence?: WriteFence | undefined }): Promise<void>;
+  saveDraft(draft: Draft, options?: { ifAbsent: boolean; fence?: WriteFence | undefined; pendingReport?: PendingReportWrite }): Promise<void | PendingReportResult>;
   /** 仅匹配原始待确认版本时转换状态，避免旧会话/旧版本覆盖。 */
-  transitionPendingDraft(expected: Draft, next: Draft, fence?: WriteFence): Promise<boolean>;
+  transitionPendingDraft(expected: Draft, next: Draft, fence?: WriteFence, conditions?: PendingConditions): Promise<boolean>;
   /** One caller wins the none -> claimed transition. A lost claim must not send. */
   claimDraftNotice(draftId: string, field: 'reminder' | 'voidNotice'): Promise<boolean>;
   /** One caller moves a pending draft to confirming. A lost claim must not insert again. */
@@ -384,6 +398,7 @@ export interface PerformanceStore {
   requeueNotificationWithAudit(notificationId: string, expectedRaw: string, nextRaw: string, audit: { key: string; value: string }): Promise<boolean>;
   getConfig(key: string): Promise<string | null>;
   setConfig(key: string, value: string, fence?: WriteFence): Promise<void>;
+  compareAndSetPendingAsk(key: string, expected: string, value: string, conditions: PendingConditions, fence?: WriteFence): Promise<boolean>;
   /**
    * M04：目标确认。同一事务：guard（策略行 FOR SHARE）→ 草稿 confirming→confirmed → 目标行 FOR UPDATE 比对 expectedBefore → 写入。
    * 比对不符（回显后被改/并发插入）整体回滚并把草稿作废（outcome=conflict）。
@@ -437,6 +452,10 @@ function matchesEntry(entry: LedgerEntry, filter: EntryFilter | undefined): bool
 }
 
 export class MemoryPerformanceStore implements PerformanceStore {
+  private pendingSequence = 0n;
+  async capturePendingArrival(): Promise<PendingArrival> {
+    return { sequence: String(++this.pendingSequence), hours: await this.getConfig('front-claw-store-hours') };
+  }
   private people: Person[] = [];
   private aliases: AliasRecord[] = [];
   private entries: LedgerEntry[] = [];
@@ -557,21 +576,62 @@ export class MemoryPerformanceStore implements PerformanceStore {
     if (fence && !fenceHolds(parseLeaseRecord(this.config.get(fence.key) ?? null), fence, fence.nowMs())) throw new FencedWriteRejected();
     return write();
   }
-  async saveDraft(draft: Draft, options?: { ifAbsent: boolean; fence?: WriteFence | undefined }): Promise<void> {
+  async saveDraft(draft: Draft, options?: { ifAbsent: boolean; fence?: WriteFence | undefined; pendingReport?: PendingReportWrite }): Promise<void | PendingReportResult> {
+    if (options?.pendingReport) return this.replacePendingReport(options.pendingReport, options.fence);
     this.fencedWrite(options?.fence, () => this.saveDraftNow(draft, options));
   }
   private saveDraftNow(draft: Draft, options?: { ifAbsent: boolean }): void {
     const next = clone(draft);
     const index = this.drafts.findIndex(row => row.draftId === next.draftId);
+    if (index >= 0 && options?.ifAbsent) return;
+    // D174：与 PG 部分唯一索引同义，跨门店、跨会话按员工约束。
+    if (next.status === 'pending' && this.drafts.some(row => row.reporterPersonId === next.reporterPersonId && row.status === 'pending' && row.draftId !== next.draftId)) throw Error('pending_reporter_unique');
     if (index >= 0) { if (!options?.ifAbsent) this.drafts[index] = next; }
     else this.drafts.push(next);
   }
-  async transitionPendingDraft(expected: Draft, next: Draft, fence?: WriteFence): Promise<boolean> {
-    return this.fencedWrite(fence, () => this.transitionPendingNow(expected, next));
+  async replacePendingReport(write: PendingReportWrite, fence?: WriteFence): Promise<PendingReportResult> {
+    const w = clone(write);
+    return this.fencedWrite(fence, () => {
+      const no = { saved: false, drafts: [], asks: [] };
+      if (w.draft && this.drafts.some(d => d.draftId === w.draft!.draftId)) return no;
+      if (w.expectedAsk) {
+        const e = w.expectedAsk, raw = this.config.get(e.key);
+        if (raw !== e.value) return no;
+        const ask = JSON.parse(raw) as { issuedSequence?: string; expiresAt?: string };
+        if (!(sequenceBefore(ask.issuedSequence, e.arrivedSequence)) || !(Date.parse(ask.expiresAt ?? '') > Date.parse(w.at))) return no;
+      }
+      const drafts = this.drafts.filter(d => d.reporterPersonId === w.reporterPersonId && d.status === 'pending');
+      const asks = [...this.config].filter(([k, v]) => k.startsWith(`employee-loop:new-customer-ask:${w.reporterPersonId}:`) && !!v);
+      const previousDrafts = clone(drafts);
+      // D174：消费旧项与挂上新项在同一个同步写区间内，肯定答复必须仍持有原追问版本。
+      for (const d of drafts) { d.status = 'void'; d.closedAt = w.at; }
+      for (const [k] of asks) this.config.set(k, '');
+      const replaced = drafts.length > 0 || asks.some(([k]) => k !== w.expectedAsk?.key);
+      if (w.draft) {
+        if ('employeeContext' in w.draft.payload && w.draft.payload.employeeContext) w.draft.payload.employeeContext.pendingSequence = String(++this.pendingSequence);
+        if (replaced && 'employeeContext' in w.draft.payload && w.draft.payload.employeeContext) w.draft.payload.employeeContext.replacedPending = true;
+        this.saveDraftNow(w.draft, { ifAbsent: true });
+      }
+      if (w.ask) {
+        const value = JSON.parse(w.ask.value);
+        value.issuedAt = w.at;
+        value.issuedSequence = String(++this.pendingSequence);
+        if (replaced) value.replacedPending = true;
+        this.config.set(w.ask.key, JSON.stringify(value));
+      }
+      return { saved: true, drafts: previousDrafts, asks: asks.filter(([k]) => k !== w.expectedAsk?.key).map(([, v]) => v) };
+    });
   }
-  private transitionPendingNow(expected: Draft, next: Draft): boolean {
+  async transitionPendingDraft(expected: Draft, next: Draft, fence?: WriteFence, conditions?: PendingConditions): Promise<boolean> {
+    return this.fencedWrite(fence, () => this.transitionPendingNow(expected, next, conditions));
+  }
+  private transitionPendingNow(expected: Draft, next: Draft, conditions?: PendingConditions): boolean {
     const row = this.drafts.find(draft => draft.draftId === expected.draftId);
     if (!row || row.status !== 'pending' || row.reporterPersonId !== expected.reporterPersonId || row.storeId !== expected.storeId || JSON.stringify(row.payload) !== JSON.stringify(expected.payload)) return false;
+    if (conditions?.expiredAt && !(Date.parse(row.expiresAt) <= Date.parse(conditions.expiredAt))) return false;
+    if (conditions?.arrivedAt && !(Date.parse(row.createdAt) < Date.parse(conditions.arrivedAt))) return false;
+    if (conditions?.arrivedSequence && !sequenceBefore('employeeContext' in row.payload ? row.payload.employeeContext?.pendingSequence : undefined, conditions.arrivedSequence)) return false;
+    if (conditions?.unexpiredAt && !(Date.parse(row.expiresAt) > Date.parse(conditions.unexpiredAt))) return false;
     row.status = next.status;
     row.payload = clone(next.payload);
     row.closedAt = next.closedAt;
@@ -605,6 +665,7 @@ export class MemoryPerformanceStore implements PerformanceStore {
     const current = this.drafts.find(row => row.draftId === draft.draftId);
     if (current?.status !== 'confirming') return false;
     if (guard?.fence && !this.fenceHeld(guard)) return false;
+    if (this.drafts.some(d => d.draftId !== current.draftId && d.reporterPersonId === current.reporterPersonId && d.status === 'pending')) return false;
     current.status = 'pending'; current.closedAt = null;
     return true;
   }
@@ -825,6 +886,19 @@ export class MemoryPerformanceStore implements PerformanceStore {
   async setConfig(key: string, value: string, fence?: WriteFence): Promise<void> {
     assertWritableConfigKey(key);
     this.fencedWrite(fence, () => this.config.set(key, value));
+  }
+  async compareAndSetPendingAsk(key: string, expected: string, value: string, conditions: PendingConditions, fence?: WriteFence): Promise<boolean> {
+    assertWritableConfigKey(key);
+    return this.fencedWrite(fence, () => {
+      if (this.config.get(key) !== expected) return false;
+      const ask = (conditions.expiredAt || conditions.arrivedAt || conditions.arrivedSequence || conditions.unexpiredAt ? JSON.parse(expected) : {}) as { expiresAt?: string; issuedAt?: string; issuedSequence?: string };
+      if (conditions.expiredAt && !(Date.parse(ask.expiresAt ?? '') <= Date.parse(conditions.expiredAt))) return false;
+      if (conditions.arrivedAt && !(Date.parse(ask.issuedAt ?? '') < Date.parse(conditions.arrivedAt))) return false;
+      if (conditions.arrivedSequence && !sequenceBefore(ask.issuedSequence, conditions.arrivedSequence)) return false;
+      if (conditions.unexpiredAt && !(Date.parse(ask.expiresAt ?? '') > Date.parse(conditions.unexpiredAt))) return false;
+      this.config.set(key, value);
+      return true;
+    });
   }
   async updateConfigLocked(key: string, extraKeys: readonly string[], mutate: (current: Record<string, string | null>) => Record<string, string> | null): Promise<boolean> {
     const current: Record<string, string | null> = {};

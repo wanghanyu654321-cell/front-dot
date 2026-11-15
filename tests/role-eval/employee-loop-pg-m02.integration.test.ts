@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs';
 import { startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS } from '../helpers/pg-cluster.js';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Client } from 'pg';
@@ -95,11 +96,16 @@ it('真实PG并发：两条独立连接同时对同一草稿回“对”，只�
   expect((await counts(url)).entries).toEqual([{ owner_person_id: 'p-wang-yj', reporter_person_id: 'p-wang-yj', amount: '420.00' }]);
   expect(replies.filter(text => text.includes('已入账'))).toHaveLength(1);
   const loser = replies.find(text => !text.includes('已入账'))!;
-  expect(loser).toMatch(/草稿版本已变化|没有待确认|已经处理过了/);
+  // R18 / D160：输家只回「这笔已经入账了，不用重复确认。」（「已经入账」不含「已入账」字串），不多记一笔、金额不翻倍。
+  expect(loser).toBe('Front Claw：这笔已经入账了，不用重复确认。');
+  expect(replies.filter(text => text === 'Front Claw：这笔已经入账了，不用重复确认。')).toHaveLength(1);
   expect(loser).not.toContain('结果未知');
   expect(loser).not.toContain('已入账');
   // 各自按原消息号查回：赢家已入账；输家没有自己的确认动作，不会冒认。
-  console.info(JSON.stringify({ 场景: '真实PG并发确认', 证据类型: 'PG17 临时集群，非线上版本', replies }));
+  const booked = (await counts(url)).entries;
+  const evidence = JSON.stringify({ 场景: '真实PG并发确认', 证据类型: 'PG17 临时集群，非线上版本', 入账笔数: booked.length, 金额合计: booked.reduce((s, r) => s + Number(r.amount), 0), 已入账回复数: replies.filter(t => t.includes('已入账')).length, replies });
+  console.info(evidence);
+  if (process.env.R18_PG_EVIDENCE) appendFileSync(process.env.R18_PG_EVIDENCE, evidence + '\n');
 
   // 存储层：两连接对同一条已认领草稿同时提交，同一 entry_id 唯一约束 + 状态条件只落一笔。
   await a.call('12号测试B店\n90（苏晓禾）', 'race2-r');

@@ -83,10 +83,18 @@ describe('M01 员工本人闭环（PG SQL 替身）', () => {
       expect(reply(await w.call(`入账结果 ${draft.draftId}`, `lookup-${member}-${session}-${version}`, member, session, version))).not.toContain('380');
       expect(await w.snapshot()).toEqual(before);
     }
-    await w.call('11号测试A店\n500（小陈）', 'proxy');
-    await w.call('11号测试B店\n500（小王）', 'foreign');
+    // D174/D175：准入新报单替换本人旧草稿；跨店拒绝保留当前挂起项。
+    expect(reply(await w.call('11号测试A店\n500（小陈）', 'proxy'))).toContain('没有确认，已作废，需要的话请重新报。');
+    expect((await w.store.getDraft(draft.draftId))?.status).toBe('void');
+    const replacement = (await w.store.listDrafts({ status: 'pending' }))[0]!;
+    await w.store.savePerson({ ...people[2]!, storeName: '栖鹭西店' });
+    expect(reply(await w.call('11号栖鹭西店\n2869（小王）', 'foreign'))).not.toContain('没有确认，已作废，需要的话请重新报。');
+    expect((await w.store.getDraft(replacement.draftId))?.status).toBe('pending');
+    expect(await w.store.listDrafts({ status: 'pending' })).toHaveLength(1);
+    expect(await w.store.listEntries()).toEqual(before.entries);
+    const afterNewMessages = await w.snapshot();
     await w.call('小陈的进度');
-    expect(await w.snapshot()).toEqual(before); expect(w.model).not.toHaveBeenCalled();
+    expect(await w.snapshot()).toEqual(afterNewMessages); expect(w.model).not.toHaveBeenCalled();
   });
 
   it('提交后回包前中断，按原消息和操作号查回，不确认后续草稿', async () => {

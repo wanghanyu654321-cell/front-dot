@@ -1,6 +1,6 @@
 # ② 开发过程问题汇总（DEV.md）
 
-> 2026-11-10，北京时间（UTC+8）。证据路径都相对于 `<WORKSPACE>/front-claw-evidence/`，另有注明的除外。
+> 2026-11-10，北京时间（UTC+8）。证据路径都相对于 `<证据目录>/`，另有注明的除外。
 > 每条按这个顺序写：**现象 / 根因 / 怎么解决的 / 证据 / 迁移时要不要继续盯**。
 > 找不到证据的，写「证据未找到」。
 > 严重级是**按迁移时仍有的风险**评定的，已解决又不会复发的降级处理。
@@ -99,7 +99,7 @@
 - **迁移盯：** 要盯。现场禁止手改，一律走封存 + hash 校验。
 
 ### DV-09 出网未验证（P2）
-- **现象：** 模型和企微的出网路径没有完整的审计记录。在 box 上 docker 安装时 HTTPS 失败。
+- **现象：** 模型和企微的出网路径没有完整的审计记录。在本机上 docker 安装时 HTTPS 失败。
 - **解决：** 部分解决。reopen 窗口证实 DeepSeek 可用，窗口 A 的「你好」也得到了真模型回复。出网范围仍未审计。
 - **证据：**
   - onsite-readonly-20261108-2016/readout-manual-transcription.txt:33-35
@@ -111,7 +111,7 @@
 - **现象：** 11-02 创建，没有容器。
 - **解决：** 未处理，去留待用户决定，不删。
 - **证据：**
-  - /workspace/front-claw-collab/PLANS.md 旁支 F6
+  - <本地路径> 旁支 F6
   - reopen RUNBOOK:30,153
 - **迁移盯：** 迁移时一并决定去留。
 
@@ -130,7 +130,7 @@
 - **根因：** validator 要求 1000:1000、权限 0600。
 - **解决（已解决）：** 经用户批准，sudo 把属组改为 1000，现为 1000:1000 600。
 - **证据：**
-  - observe-precheck-20261109-review/REVIEW.md:12,25,128
+  - 复审记录
   - observe-entry-20261108-2005/env-trust-boundary.md
   - PLANS.md 第 3 步
 - **迁移盯：** 要盯。属组和权限写进部署脚本，并加校验。
@@ -143,7 +143,7 @@
 - **证据：**
   - step4A-live-20261110/step4A-02-start.log（outer-mounts、launcher-node）
   - front-claw-pilot-flow-20261108/REPORT.md:40
-  - f1-readonly-20261109-review/REVIEW.md:43
+  - 复审记录
 - **迁移盯：** 要盯。改用专用 uid。
 
 ### DV-14 env 注入，P1（LD_PRELOAD 类键）（P1）
@@ -166,7 +166,7 @@
 ### DV-16 每一步都要人工批准，节奏慢（P2）
 - **现象：** 批准只认用户本人 1:1 原话。几乎每个现场动作都要单独批准（v1-v4 操作申请、各轮开窗），等待时间占了主要工期。
 - **证据：**
-  - /workspace/front-claw-collab/PLANS.md「规则」
+  - <本地路径>
   - codex-collab-practices-20261109.md（来回规划太多）
   - operation-request-20261108-v4.md
   - 具体的等待时长统计：证据未找到
@@ -194,9 +194,9 @@
 
 ### DV-18 窗口 A 收尾证据回传（P3，21:53 已解决）
 - **现象：** 21:44 时收尾证据还没到。21:51 已到 `step4A-live-20261110/`，共 18 个文件，并附 zip。
-  - zip 的 sha256 是 d4fc91522c65b715a33f532ff21e474b472d2c5d1d6b4bb52f2adca8597414a1，与牙牙给的值一致；解包后与目录逐字节相同。
+  - zip 的 sha256 是 d4fc91522c65b715a33f532ff21e474b472d2c5d1d6b4bb52f2adca8597414a1，与助手A给的值一致；解包后与目录逐字节相同。
 - **遗留问题：**
-  - 回传仍是人工打包，从 WATCH_DONE（约 21:39:51）到落到 box（21:51），延迟约 11 分钟；
+  - 回传仍是人工打包，从 WATCH_DONE（约 21:39:51）到落到本机（21:51），延迟约 11 分钟；
   - zip 和目录里都没有自带 SHA256SUMS。
 - **证据：** ISSUE-REGISTER.md §5。
 - **迁移盯：** 一般。回传时自带 SHA256SUMS，并实现自动化。
@@ -259,13 +259,13 @@
 - **证据：**
   - step3-fix-20261109/REPORT.md
   - step3-fix-20261109-r3/task/TASK.md:4
-  - /workspace/front-claw-collab/usage-ledger.tsv（8 次复核，单次 7.6 万-14 万输入 token）
+  - <本地路径>（8 次复核，单次 7.6 万-14 万输入 token）
 - **迁移盯：** 要盯。补丁一次做小，复核规则事先写清楚。
 
 ### DV-27 执行器中断（P2）
 - **现象：** 执行器中断的直接记录：**证据未找到**。
 - **相关旁证：** CLI 复核 r3 出现 websocket 断线重连两次（`Reconnecting... 2/5`、`3/5`），最终仍产出 verdict。
-- **证据：** /workspace/front-claw-collab/runs/20261109-210624-step3-live-r4-bundle-review-r3/events.jsonl:3-4
+- **证据：** <本地路径>
 - **迁移盯：** 一般。长任务要能断点续跑。
 
 ### DV-28 测试原文偏差：占位符原样发出、测试者改写原文（P1）〔窗口 A〕
@@ -289,10 +289,10 @@
 - **现象：** 照截图抄录出错 8 次，f1 的 label 键名也抄错了（D2）。
 - **证据：**
   - codex-collab-practices-20261109.md
-  - f1-readonly-20261109-review/REVIEW.md
+  - 复审记录
 - **迁移盯：** 要盯。证据一律走文件 + sha256，不手抄。
 
-### DV-31 box 侧工具链问题（P3）
+### DV-31 本机侧工具链问题（P3）
 - **现象：** ChatGPT 桌面回调被 nft 规则 reset，未修复。
 - **证据：** chatgpt-loopback-root-cause-20261108.md
 - **迁移盯：** 不影响迁移本身。

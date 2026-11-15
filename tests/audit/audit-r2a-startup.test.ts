@@ -2,7 +2,7 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { startFrontClawHook } from '../../integrations/opendot-front-claw/opendot-src/front-claw-hook.js';
 import { fakeHost } from '../opendot/fixture-m07.js';
-// R3：由 Codex牙 的缺陷特征断言（"import 在超时之外"）改为安全断言：模块顶层异步初始化一直 pending 时，
+// R3：由 助手B 的缺陷特征断言（"import 在超时之外"）改为安全断言：模块顶层异步初始化一直 pending 时，
 // 钩子立即返回、超时后标 unavailable 并告警；迟到的模块随后被关闭。修前失败（钩子一直不返回），修后通过。
 it('AUDIT regression safe (R3): module import/initialisation is inside the startup budget', async () => {
   let release!: () => void; const g = globalThis as { __auditImportGate?: Promise<void>; __auditImportReached?: () => void };

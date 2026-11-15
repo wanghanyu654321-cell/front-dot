@@ -102,10 +102,10 @@ describe('R4 R3A-01 更正对象选择与并排确认', () => {
     const reply = await w.call('m-zhao', '秦姐520算我今天的，另外把我今天已报许姐680那笔改成860');
     // 不得把何姐 111 显示成要改成 860
     expect(reply).not.toMatch(/何姐[^\\n]*111\s*元\s*→\s*860|小赵 111元 → 860元|111元 → 860元/);
-    // 报单半句必须明说没办，或出现在同一份待确认清单里
-    const saysReportUndone = /没有办|没办|请单独/.test(reply) && /秦姐|520/.test(reply);
-    const listsBoth = /秦姐/.test(reply) && /520/.test(reply) && /还没入账|还没改账/.test(reply);
-    expect(saysReportUndone || listsBoth).toBe(true);
+    // R18 / D157：复合句整句先问——不出报单草稿、不出改账草稿，明说没有写入。
+    const listsBoth = false;
+    expect(reply).not.toMatch(/还没入账|还没改账/);
+    expect(reply).toMatch(/没有写入/);
     const confirm = await w.call('m-zhao', '对');
     const after = (await w.base.listEntries()).find(e => e.entryId === he.entryId)!;
     expect(after).toEqual(he);
@@ -123,9 +123,9 @@ describe('R4 R3A-01 更正对象选择与并排确认', () => {
     const xu = await posted(w, 'm-zhao', '许姐680');
     const reply = await w.call('m-zhao', '秦姐520算我今天的，另外把我今天已报许姐680那笔改成860');
     expect(reply).not.toMatch(/何姐[^\\n]*111\s*元\s*→\s*860|111元 → 860元/);
-    const saysReportUndone = /没有办|没办|请单独/.test(reply) && /秦姐|520/.test(reply);
-    const listsBoth = /秦姐/.test(reply) && /520/.test(reply);
-    expect(saysReportUndone || listsBoth).toBe(true);
+    // R18 / D157：复合句整句先问，零草稿。
+    expect(reply).not.toMatch(/还没入账|还没改账/);
+    expect(reply).toMatch(/没有写入/);
     if (/还没改账/.test(reply) && /许姐/.test(reply)) {
       expect(reply).toMatch(/原记录[：:].*许姐/);
       expect(reply).toContain('680');

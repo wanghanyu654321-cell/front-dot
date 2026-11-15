@@ -1,6 +1,6 @@
 /**
  * M07：Front Claw 需要 OpenDot 宿主提供的最小契约。每一项都注明 OpenDot 源码出处
- * （本机副本 /workspace/uploads/od/OpenDot，来自 OpenDot.zip sha256 6ad0c734…ce49，无 git SHA）。
+ * （本地 OpenDot 源码副本，来自 OpenDot.zip sha256 6ad0c734…ce49，无 git SHA）。
  * 没有出处的写成「假设」，不能当作 OpenDot 已有接口。
  *
  * 出处：

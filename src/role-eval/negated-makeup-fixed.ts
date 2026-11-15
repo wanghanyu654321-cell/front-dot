@@ -33,8 +33,9 @@ export function loadNegatedMakeupFixedConfig(source?: string | NegatedMakeupFixe
 export function fixedNegatedMakeupRegex(): RegExp {
   const c = loadNegatedMakeupFixedConfig();
   const past = c.pastDayPattern;
-  // 不(是|算|要|用) + (在补(报|记)? | 补(报|记|的) | 补+过去日 | 过去日+那种补报)
-  const notBranch = String.raw`不(?:是|算|要|用)(?:在补(?:报|记)?|补(?:报|记|的)|补(?:${past})|(?:${past})那种补报)(?:的)?`;
+  // D173：R15 新收的两个时间结构只用配置 phrasesForReport 中的「不是」，
+  // 不把基础短语的四种否定词乘到时间结构；其余交 D168 unseen-makeup 先问。
+  const notBranch = String.raw`(?:不(?:是|算|要|用)(?:在补(?:报|记)?|补(?:报|记|的))|不是(?:补(?:${past})|(?:${past})那种补报))(?:的)?`;
   const feifei = c.feifei;
   const body = String.raw`(?:${notBranch}|${feifei})(?!录|登|单|漏)(?!上(?!周|个|星期))`;
   return new RegExp(String.raw`[，,;；、。.\s]*${body}(?:的)?(?:${past})?(?:的)?(?:补报|补记|报|记|单)?[，,;；、。.\s]*`, 'g');

@@ -1,8 +1,8 @@
 # ① 产品问题登记（PRODUCT.md）
 
 > 2026-11-10，时间均为北京时间（UTC+8）。只读整理，未连服务器、未读 env、未补测。
-> 依据：`productization-issues-20261110/ISSUES.md`（sha256 4cab967c…，P-01…P-21）、`OWNER-CAPABILITIES.md`（6c25267d…）、窗口 A（RUNID b58d72d3，21:04 开窗，21:34:22 到期）截图 7 张 `step4A-screens-20261110/`（SHA256SUMS 全部 OK）、r9 源码 `/workspace/r9src/repo`。
-> **截图为准。** 牙牙转述与截图不一致的地方，在 ISSUE-REGISTER.md §4 单独列出。
+> 依据：`productization-issues-20261110/ISSUES.md`（sha256 4cab967c…，P-01…P-21）、`OWNER-CAPABILITIES.md`（6c25267d…）、窗口 A（RUNID b58d72d3，21:04 开窗，21:34:22 到期）截图 7 张 `step4A-screens-20261110/`（SHA256SUMS 全部 OK）、r9 源码 `<本地路径>`。
+> **截图为准。** 助手A转述与截图不一致的地方，在 ISSUE-REGISTER.md §4 单独列出。
 > 根因标注：**已证实**＝源码与截图或日志能直接对上；**推断**＝能解释现象，但缺现场数据核对。
 > 严重级与分区定义见 ISSUE-REGISTER.md §1。
 
