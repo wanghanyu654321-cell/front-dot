@@ -41,6 +41,7 @@ export class MemorySql implements SqlClient {
       next[index] = JSON.stringify(payload, null, 1); params = next;
       compact = compact.replace(sequenceInsert[0], `$${index + 1}::text`);
     }
+    if (/^(?:SAVEPOINT commit_gate|RELEASE SAVEPOINT commit_gate|ROLLBACK TO SAVEPOINT commit_gate|SET LOCAL lock_timeout='750ms')$/i.test(compact)) return { rows: [] };
     if (/^BEGIN$/i.test(compact)) {
       this.snapshot = new Map([...this.tables].map(([name, rows]) => [name, rows.map(row => ({ ...row }))]));
       return { rows: [] };
@@ -147,7 +148,7 @@ export class MemorySql implements SqlClient {
 
   private select(sql: string, params: readonly unknown[]): Row[] {
     // M03: 行锁子句在单线程替身里无意义，忽略（真实锁序由 PG 集成测试覆盖）。
-    sql = sql.replace(/\s+FOR (?:SHARE|UPDATE)$/i, '');
+    sql = sql.replace(/\s+FOR (?:SHARE|UPDATE)(?: NOWAIT)?$/i, '');
     const match = new RegExp(String.raw`^SELECT \* FROM (${ident})(?: WHERE (.+))?$`, 'i').exec(sql);
     if (!match?.[1]) throw Error(sql);
     const table = this.rows(match[1]);
@@ -194,6 +195,14 @@ export class MemorySql implements SqlClient {
       const c = clause.trim();
       const prefix = /^starts_with\(key,\$(\d+)\)$/.exec(c);
       if (prefix) return String(row.key).startsWith(String(params[Number(prefix[1]) - 1]));
+      const claim = /^\(\(payload_json::jsonb->'employeeContext'\) - 'finalReply'::text\) IS NOT DISTINCT FROM \(\(\$(\d+)::jsonb->'employeeContext'\) - 'finalReply'::text\)$/.exec(c);
+      if (claim) {
+        const clean = (payload: string) => {
+          const context = JSON.parse(payload).employeeContext;
+          return context ? Object.fromEntries(Object.entries(context).filter(([key])=>key!=='finalReply').sort(([a],[b])=>a.localeCompare(b))) : null;
+        };
+        return JSON.stringify(clean(String(row.payload_json)))===JSON.stringify(clean(String(params[Number(claim[1])-1])));
+      }
       const payloadEqual = /^payload_json::jsonb=\$(\d+)::jsonb$/.exec(c);
       if (payloadEqual) {
         const sorted = (v: unknown): unknown => Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, value]) => [k, sorted(value)])) : v;

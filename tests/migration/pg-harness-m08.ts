@@ -1,6 +1,6 @@
 import { startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS } from '../helpers/pg-cluster.js';
 import { afterAll, beforeAll } from 'vitest';
-import { Client } from 'pg';
+import { Client, trackDatabase } from '../helpers/pg-resources.js';
 import { FRONT_CLAW_DATABASE_URL, openPerformanceStore, readPerformanceMigration } from '../../src/role-eval/performance-open.js';
 import { migratePerformance } from '../../src/role-eval/performance-postgres.js';
 import { migrateUp } from '../../src/role-eval/schema-migrations.js';
@@ -25,7 +25,7 @@ export async function freshDatabase(): Promise<string> {
 }
 
 export const env = (url: string) => ({ [FRONT_CLAW_DATABASE_URL]: url });
-export async function open(url: string) { return openPerformanceStore(env(url), { requirePostgres: true }); }
+export async function open(url: string) { return trackDatabase(await openPerformanceStore(env(url), { requirePostgres: true })); }
 export async function rawClient(url: string) { const c = new Client({ connectionString: url }); await c.connect(); return c; }
 export async function rawQuery(url: string, sql: string, params: unknown[] = []) {
   const c = await rawClient(url);
@@ -46,7 +46,7 @@ export async function applyLatest(url: string): Promise<void> {
 /** 打开已升到 LATEST 的库（金额 numeric、status CHECK、store_targets）。 */
 export async function openLatest(url: string) {
   await applyLatest(url);
-  return openPerformanceStore(env(url), { requirePostgres: true });
+  return trackDatabase(await openPerformanceStore(env(url), { requirePostgres: true }));
 }
 
 /** R6 / M08-02：在库上建只授 SELECT 的非超级用户角色，返回用该角色的连接串（trust 认证）。 */

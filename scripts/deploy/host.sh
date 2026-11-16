@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Version checks are read-only, including the historical --apply spelling.
+# Consume that compatibility argument before sourcing the mutating deploy library.
+host_arguments=()
+for argument in "$@"; do
+  [[ "$argument" = --apply ]] || host_arguments+=("$argument")
+done
+set -- "${host_arguments[@]}"
 # shellcheck source=scripts/deploy/common.sh
 source "$(dirname "$0")/common.sh"
 echo 'plan: check installed Node >=22, Docker Engine >=29 and Compose >=5; no installation or host changes'

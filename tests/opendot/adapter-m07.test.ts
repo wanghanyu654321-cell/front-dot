@@ -93,7 +93,7 @@ describe('M07 契约：入口 → 适配器 → handler → 存储 → 回复记
     expect(t.service.stats().handled).toBe(0);
     await t.service.close();
   });
-  it('没绑定、绑定停用、企业不符、帧缺企业号、绑定账号与人员不符：回「未绑定」，不建草稿', async () => {
+  it('没绑定、绑定停用、企业不符、绑定账号与人员不符拒绝；缺企业号复用可信锚', async () => {
     const t = await boot();
     await t.say('m-lin', '我的进度', 'u-1'); // 小林未绑定
     await t.world.bindings.saveBinding({ botId: BOT, corpId: CORP, memberId: 'm-xw', accountId: 'a-xw', version: 2, active: false });
@@ -104,9 +104,10 @@ describe('M07 契约：入口 → 适配器 → handler → 存储 → 回复记
     const noCorp = t.channels.frame('m-zhao', SHEET_ZHAO, 'u-5');
     delete (noCorp.body.from as { corpid?: string }).corpid;
     t.channels.current().frame(noCorp); await t.service.idle();
-    expect(t.channels.replies()).toEqual([UNBOUND, UNBOUND, UNBOUND, UNBOUND, UNBOUND]);
-    expect(await t.world.store.listDrafts()).toEqual([]);
-    expect(t.service.stats().unbound).toBe(5);
+    expect(t.channels.replies().slice(0, 4)).toEqual([UNBOUND, UNBOUND, UNBOUND, UNBOUND]);
+    expect(t.channels.replies().at(-1)).toContain('还没入账');
+    expect(await t.world.store.listDrafts()).toHaveLength(1);
+    expect(t.service.stats().unbound).toBe(4);
     await t.service.close();
   });
   it('会话隔离：别人的「对」确认不了小赵的草稿', async () => {
@@ -301,7 +302,7 @@ describe('M07 取消与关停：只报告真实状态，不撤销账目', () => 
     expect((await t.world.store.listEntries({ storeId: 's-b' })).length).toBe(3);
     await t.service.close();
   });
-  it('进行中取消：请求如实收尾为「已取消、结果未知」；迟到的提交照实反映在结果里', async () => {
+  it('进行中取消：不开始新回复；迟到的提交照实反映在结果里', async () => {
     let sql!: GatedSql;
     const world = await memoryWorld(() => (sql = new GatedSql()));
     const t = await boot({ world });
@@ -318,7 +319,7 @@ describe('M07 取消与关停：只报告真实状态，不撤销账目', () => 
     const report = await Promise.race([cancelling, new Promise<'pending'>(r => setTimeout(() => r('pending'), 200))]);
     // 请求预算在中止时立即收尾为 cancelled（handler 原规则），账本写入仍在途。
     expect(report === 'pending' ? 'pending' : report.state).toBe('cancelled');
-    expect(t.last()).toContain('结果未知');
+    expect(t.channels.replies()).toHaveLength(1); // 仅原草稿回显；取消后不开始新发送。
     sql.gate = null; release();
     await new Promise(r => setTimeout(r, 50));
     const after = await t.service.result(op);

@@ -1,3 +1,5 @@
+import { safeInboundDiagnostics } from './inbound-diagnostics.js';
+import { snapshotBinding, sameBinding, type WecomBotBinding } from '../role-eval/wecom-bot-bindings.js';
 import { capturePendingArrival } from '../role-eval/pending-order.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
@@ -164,32 +166,50 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
     },
   }, { active: () => !closing && !!channel && leaseHeld() });
 
-  async function bindingFor(event: InboundText) {
-    const rows = await boot.bindings.listBindings();
-    const binding = rows.find(row => row.botId === event.botId && row.memberId === event.memberId);
-    // 企业必须对得上；帧里没带企业号也拒绝（与 controlled-real pilot 一致，宁可回“未绑定”）。
-    if (!binding?.active || event.corpId === undefined || binding.corpId !== event.corpId) return null;
-    const person = await boot.store.getPersonByMember(event.memberId);
-    if (!person || person.accountId !== binding.accountId) return null;
-    return binding;
+  type Denial = 'missing_domain' | 'no_binding' | 'ambiguous' | 'inactive' | 'mismatch' | 'invalid_directory' | 'permission';
+  type Identity = { binding: Readonly<WecomBotBinding>; personId: string };
+  async function bindingFor(event: Readonly<InboundText>): Promise<{ identity: Identity } | { reason: Denial }> {
+    // Copy before any subsequent await: trusted readers may retain their return references.
+    let rows: WecomBotBinding[];
+    try { rows = structuredClone(await boot.bindings.listBindings()); } catch { return { reason: 'invalid_directory' }; }
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object')) return { reason: 'invalid_directory' };
+    const candidates = rows.filter(row => row.botId === event.botId && row.memberId === event.memberId);
+    if (!candidates.length) return { reason: 'no_binding' };
+    if (candidates.length !== 1) return { reason: 'ambiguous' };
+    if (typeof candidates[0]?.corpId !== 'string' || !candidates[0].corpId.trim()) return { reason: 'missing_domain' };
+    let binding: Readonly<WecomBotBinding>;
+    try { binding = Object.freeze(snapshotBinding(candidates[0])); } catch { return { reason: 'invalid_directory' }; }
+    if (!binding.active) return { reason: 'inactive' };
+    if (event.corpId !== undefined && event.corpId !== binding.corpId) return { reason: 'mismatch' };
+    const person = structuredClone(await boot.store.getPersonByMember(event.memberId));
+    if (!person) return { reason: 'mismatch' };
+    if (!person.active) return { reason: 'inactive' };
+    if (person.memberId !== binding.memberId || person.accountId !== binding.accountId) return { reason: 'mismatch' };
+    // Person's public contract has no corpId. If a trusted reader supplies that domain, it must agree.
+    if ('corpId' in person && person.corpId !== binding.corpId) return { reason: 'mismatch' };
+    const people = structuredClone(await boot.store.listPeople());
+    if (people.filter(p => p.memberId === binding.memberId).length !== 1 || people.filter(p => p.accountId === binding.accountId).length !== 1) return { reason: 'ambiguous' };
+    const current = people.find(p => p.personId === person.personId);
+    if (!current?.active || current.memberId !== binding.memberId || current.accountId !== binding.accountId ||
+        'corpId' in current && current.corpId !== binding.corpId) return { reason: 'mismatch' };
+    return { identity: { binding, personId: person.personId } };
   }
 
   function receive(event: InboundText): void {
     event = Object.freeze(structuredClone(event));
     const pendingArrival = boot.handler.employeeLoop ? capturePendingArrival(boot.store) : undefined;
     void pendingArrival?.catch(() => {});
-    let pendingSequence: string | null = null;
-    void pendingArrival?.then(value => { pendingSequence = value.sequence; }, () => {});
+    let denial: Denial | undefined;
     const arrivedAt = event.createTime === undefined ? undefined : new Date(event.createTime * 1000).toISOString();
     const id = operationIdFor(event);
     const deadline = performance.now() + requestTimeoutMs;
     const logInbound = async (reason?: string) => {
       const observation = reason ? undefined : observations.get(event.messageId);
       if (!reason) observations.delete(event.messageId);
-      try { host.logger.info({ event: 'inbound_message', operationId: id,
+      try { host.logger.info(safeInboundDiagnostics({
         route: observation?.route ?? '追问', gateReason: reason ?? observation?.gateReason ?? 'not_applicable',
-        pendingSequence, modelMs: observation?.modelMs ?? 0,
-        errorCategory: observation?.errorCategory ?? (reason === 'failed' ? 'processing_error' : reason === 'timeout' || reason === 'cancelled' ? reason : 'none') }); } catch { /* Logs cannot change business results. */ }
+        pendingSequence: observation?.pendingSequence, modelMs: observation?.modelMs, identityReason: denial,
+        errorCategory: reason === 'failed' ? 'processing_error' : reason === 'timeout' || reason === 'cancelled' ? reason : observation?.errorCategory ?? 'none' })); } catch { /* Logs cannot change business results. */ }
     };
     if (closing) { stats.droppedClosing++; void logInbound('closing'); return; }
     // 旧消费者（租约本地已过期）不做任何业务写入，也不回复。
@@ -197,27 +217,39 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
     if (inflight.has(id)) { stats.duplicate++; void logInbound('duplicate'); return; }
     const fence = lease?.fence() ?? undefined;
     const op: Op = { id, messageId: event.messageId, state: 'running', controller: new AbortController(), ...(fence ? { fence } : {}) };
-    const read = <T>(reading: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
-      const stop = () => { op.state = performance.now() >= deadline ? 'timeout' : 'cancelled'; done(); reject(Error('read_budget_exhausted')); };
-      const timer = setTimeout(stop, Math.max(0, deadline - performance.now()));
-      const done = () => { clearTimeout(timer); op.controller.signal.removeEventListener('abort', stop); };
-      reading.then(value => { done(); resolve(value); }, error => { done(); reject(error); });
-      if (op.controller.signal.aborted || performance.now() >= deadline) { stop(); return; }
+    const admittedChannel = channel;
+    const active = () => !op.controller.signal.aborted && performance.now() < deadline &&
+      admittedChannel === channel && (admittedChannel?.current?.(event) ?? admittedChannel?.ready() ?? false);
+    const read = <T>(reading: () => Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+      let settled = false, timedOut = false;
+      const done = () => { settled = true; clearTimeout(timer); op.controller.signal.removeEventListener('abort', stop); };
+      const stop = () => {
+        if (settled) return;
+        op.state = timedOut || performance.now() >= deadline ? 'timeout' : 'cancelled';
+        done(); op.controller.abort(); reject(Error('request_budget_exhausted'));
+      };
+      const timer = setTimeout(() => { timedOut = true; stop(); }, Math.ceil(Math.max(0, deadline - performance.now())));
+      if (!active()) { stop(); return; }
       op.controller.signal.addEventListener('abort', stop, { once: true });
+      void Promise.resolve().then(() => { if (!active()) throw Error('request_not_active'); return reading(); }).then(value => {
+        if (settled) return;
+        if (!active()) { stop(); return; }
+        done(); resolve(value);
+      }, error => { if (!settled) { done(); reject(error); } });
     });
     remember(op);
-    const queueKey = sha([event.botId, event.corpId, event.memberId]);
+    const queueKey = sha([event.botId, event.memberId]);
     const previous = employeeQueues.get(queueKey) ?? Promise.resolve();
     let duplicate = false;
     const run = previous.catch(() => {}).then(async () => {
       // R1（M07-01）：处理前按 PG 租约行核对 fencing（本地时钟偏差时 leaseHeld 可能误判）；不成立 → 不做任何业务处理、不回复。
-      if (!await read(fenceStillHolds(op.fence))) { stats.droppedStale++; op.state = 'cancelled'; return; }
-      const raw = await read(boot.store.getConfig(OPERATION_RECORD_PREFIX + id));
+      if (!await read(() => fenceStillHolds(op.fence))) { stats.droppedStale++; op.state = 'cancelled'; return; }
+      const raw = await read(() => boot.store.getConfig(OPERATION_RECORD_PREFIX + id));
       const saved = parseOperationRecord(raw);
       if (raw !== null && !saved) throw Error('invalid_operation_record');
       // A fenced consumer may finish a known claimed confirmation; never rerun extraction or an unknown send.
-      const actor = saved?.state === 'running' && event.text.trim() === '对' ? await read(boot.store.getPersonByMember(event.memberId)) : null;
-      const resumable = actor && (await read(boot.store.listDrafts({ reporterPersonId: actor.personId, storeId: actor.storeId, status: 'confirming' })))
+      const actor = saved?.state === 'running' && !saved.replyState && event.text.trim() === '对' ? await read(() => boot.store.getPersonByMember(event.memberId)) : null;
+      const resumable = actor && (await read(() => boot.store.listDrafts({ reporterPersonId: actor.personId, storeId: actor.storeId, status: 'confirming' })))
         .some(draft => draft.kind === 'report' && draft.payload.type === 'report' && draft.payload.employeeContext?.memberId === event.memberId && draft.payload.employeeContext.actionMessageId === event.messageId);
       if (saved && !resumable) {
         duplicate = true; stats.duplicate++;
@@ -226,17 +258,28 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
         if (saved.replyState) op.replyState = saved.replyState;
         return;
       }
-      op.persisted = true; await saveOp(op);
+      op.persisted = true; await read(() => saveOp(op));
       let replies: readonly string[];
-      const binding = await read(bindingFor(event));
-      if (!binding) { stats.unbound++; replies = [UNBOUND]; op.state = 'completed'; }
+      const resolved = await read(() => bindingFor(Object.freeze(structuredClone(event))));
+      const identity = 'identity' in resolved ? resolved.identity : undefined;
+      const binding = identity?.binding;
+      const validateBinding = async () => {
+        const latest = await read(() => bindingFor(Object.freeze(structuredClone(event))));
+        return !!identity && 'identity' in latest && latest.identity.personId === identity.personId && sameBinding(identity.binding, latest.identity.binding);
+      };
+      if (!binding) { denial = 'reason' in resolved ? resolved.reason : 'invalid_directory'; stats.unbound++; replies = [UNBOUND]; op.state = 'completed'; }
       else {
-        const result = await boot.handler.handleMessage({
+        const result = await read(() => boot.handler.handleMessage({
           memberId: event.memberId, text: event.text, messageId: event.messageId, arrivedAt, pendingArrival,
           sessionId: sha(['opendot', binding.corpId, event.botId, event.memberId, binding.accountId]),
+          binding: Object.freeze(structuredClone(binding)), validateBinding,
+          readBinding: async () => {
+            const latest = await read(() => bindingFor(Object.freeze(structuredClone(event))));
+            return 'identity' in latest ? structuredClone(latest.identity.binding) : null;
+          }, channelActive: active,
           bindingVersion: binding.version, signal: op.controller.signal, deadline,
-          ...(op.fence ? { fence: op.fence } : {}),
-        });
+          ...(op.fence ? { fence: { ...op.fence } } : {}),
+        }));
         op.state = result.state ?? 'completed';
         op.ledgerSettled = result.ledgerSettled === true;
         replies = result.replies;
@@ -244,10 +287,15 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
       }
       const target = channel;
       // R1（M07-01）：被接管/租约过期的旧持有者不回复（结果按 fencing 已被拒绝或由新持有者负责）。
-      if (replies.length && target && await fenceStillHolds(op.fence)) op.replyState = await target.reply(event, replies.join('\n\n'), { signal: AbortSignal.timeout(4_000), deadline: performance.now() + 4_000 });
-      else if (replies.length) stats.droppedStale++;
+      if (replies.length && target && await read(() => fenceStillHolds(op.fence)) && (!binding || await validateBinding())) {
+        // Durable uncertainty is written BEFORE invoking an outbound side effect. Never replay it after a crash.
+        op.replyState = 'unknown';
+        await read(() => saveOp(op));
+        if (!await read(() => fenceStillHolds(op.fence)) || binding && !await validateBinding()) return;
+        op.replyState = await read(() => target.reply(Object.freeze(structuredClone(event)), replies.join('\n\n'), { signal: op.controller.signal, deadline }));
+      } else if (replies.length) stats.droppedStale++;
     }).catch(() => { if (op.state === 'running') op.state = 'failed'; }).finally(async () => {
-      if (op.persisted) await saveOp(op).catch(() => {});
+      if (op.persisted) await read(() => saveOp(op)).catch(() => {});
       await logInbound(duplicate ? 'duplicate' : op.state === 'failed' || op.state === 'timeout' || op.state === 'cancelled' ? op.state : undefined);
       inflight.delete(id);
       if (employeeQueues.get(queueKey) === run) employeeQueues.delete(queueKey);
@@ -301,14 +349,14 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
     }
     boot.startNotificationDispatch(notifier, { ...(deps.dispatchIntervalMs ? { intervalMs: deps.dispatchIntervalMs } : {}),
       onEvent: event => { if (event.type === 'unknown_alert' || event.type === 'backlog_alert' || event.type === 'recovered_unknown') host.logger.warn({ type: event.type, kind: event.kind ?? null }, 'Front Claw notification alert'); } });
-    host.logger.info({ owner, state: 'active' }, 'Front Claw adapter consuming');
+    host.logger.info({ state: 'active' }, 'Front Claw adapter consuming');
   }
   async function deactivate(reason: string) {
     const current = channel;
     channel = undefined;
     boot.stopNotificationDispatch();
     if (current) { stats.rejectedFrames += current.rejected(); await current.close().catch(() => {}); }
-    host.logger[reason === 'closing' ? 'info' : 'warn']({ owner, reason }, 'Front Claw adapter stopped consuming');
+    host.logger[reason === 'closing' ? 'info' : 'warn']({ reason }, 'Front Claw adapter stopped consuming');
   }
   let ticking: Promise<void> | undefined;
   async function tickOnce() {
@@ -374,7 +422,7 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
         await lease?.release().catch(() => {});
         await boot.close();
         closed = true;
-        host.logger.info({ owner, state: 'closed' }, 'Front Claw adapter closed');
+        host.logger.info({ state: 'closed' }, 'Front Claw adapter closed');
       })();
     },
   };

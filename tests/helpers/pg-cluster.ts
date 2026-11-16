@@ -145,7 +145,7 @@ export async function startPgCluster(options: PgClusterOptions = {}): Promise<Pg
   if (firstPort !== undefined && (!Number.isInteger(firstPort) || firstPort < 1 || firstPort > 65535)) {
     throw new Error('firstPort must be an integer between 1 and 65535');
   }
-  const bin = process.env.FRONT_CLAW_PG_BIN?.trim() || '/usr/lib/postgresql/16/bin';
+  const bin = process.env.FRONT_CLAW_PG_BIN?.trim() || '/usr/lib/postgresql/17/bin';
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'front-claw-pg-')));
   let watched: Watched | undefined;
   let safeToRemove = true;
@@ -160,7 +160,7 @@ export async function startPgCluster(options: PgClusterOptions = {}): Promise<Pg
       const log = await open(logPath, 'a');
       try {
         watched = watchProcess(spawn(join(bin, 'postgres'), [
-          '-D', directory, '-p', String(port), '-h', '127.0.0.1', '-k', directory, '-c', 'listen_addresses=127.0.0.1',
+          '-D', directory, '-p', String(port), '-h', '127.0.0.1', '-k', '', '-c', 'listen_addresses=127.0.0.1',
         ], { stdio: ['ignore', log.fd, log.fd], env: { ...process.env, LC_ALL: 'C' } }));
       } finally { await log.close(); }
       const base = `postgres://frontclaw@127.0.0.1:${port}`;

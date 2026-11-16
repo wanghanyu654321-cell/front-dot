@@ -1,3 +1,4 @@
+import { safeInboundDiagnostics } from './inbound-diagnostics.js';
 import type { OpenDotHostLogger } from '../opendot/host-contract.js';
 
 const summaries: Record<string, [string, string]> = {
@@ -31,7 +32,7 @@ export function createStandaloneLogger(write?: (line: string) => void): OpenDotH
       record = { event: fields.event, errorCategory, errorCode };
     } else if (fields.event === 'inbound_message') {
       // The adapter owns these categorical diagnostics; ignore all additional fields.
-      record = Object.fromEntries(['event', 'operationId', 'route', 'gateReason', 'pendingSequence', 'modelMs', 'errorCategory'].map(key => [key, fields[key]]));
+      record = safeInboundDiagnostics(fields);
     } else if (['active', 'closed', 'standby', 'disabled', 'ready'].includes(String(fields.state))) record = { event: 'lifecycle', state: fields.state };
     else if (fields.reason === 'channel_down') record = { event: 'lifecycle', state: 'reconnecting', reason: 'channel_down' };
     else record = { event: 'warning', reason: ['lease_lost', 'closing', 'start_failed'].includes(String(fields.reason)) ? fields.reason

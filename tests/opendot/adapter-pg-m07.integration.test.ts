@@ -15,7 +15,11 @@ import { fakeHost, manualClock, offlineChannels, opIdOf, seedWorld } from './fix
 let cluster: { base: string; stop(): Promise<void> };
 let dbSeq = 0;
 beforeAll(async () => {
-  cluster = await startPgCluster();
+  // The append runner already owns and verifies this disposable cluster.
+  if (process.env.APPEND_OWNED_PG === '1') {
+    if (process.env.APPEND_PG_BASE !== 'postgres://append_synthetic@localhost:55482') throw Error('owned_pg_required');
+    cluster = {base: process.env.APPEND_PG_BASE, stop: async () => {}};
+  } else cluster = await startPgCluster();
 }, PG_START_HOOK_TIMEOUT_MS);
 afterAll(async () => { await cluster?.stop(); }, PG_STOP_HOOK_TIMEOUT_MS);
 
@@ -134,7 +138,7 @@ it('真实PG（R1 fencing）：时钟偏差双消费者同时收到同一「对�
   await a.service.close(); await b.service.close();
 }, 60_000);
 
-it('真实PG竞态：「对」与撤权同时发生 —— 撤权事务持锁，确认在 FOR SHARE 上等待；撤权提交后确认被拒、零入账', async () => {
+it('真实PG竞态：「对」与撤权同时发生 —— 配置争用 NOWAIT 拒绝、零入账；撤权提交后仍拒绝', async () => {
   const url = await seeded();
   const a = await adapter(url, 'A');
   expect(await say(a, 'm-zhao', SHEET, 'rv-1')).toContain('560');
@@ -142,7 +146,9 @@ it('真实PG竞态：「对」与撤权同时发生 —— 撤权事务持锁，
   await admin.query('BEGIN');
   await admin.query(`SELECT value FROM front_claw_perf.performance_config WHERE key=$1 FOR UPDATE`, [ACCESS_POLICY_KEY]);
   a.channels.send('m-zhao', '对', 'rv-2');
-  await waitForLockWait(url, '%FOR SHARE%');
+  await a.service.idle();
+  expect(a.channels.replies().at(-1)).toContain('争用已回滚');
+  expect(await entries560(url)).toBe(0);
   const members = membersM05(); members['p-zhao'] = { ...members['p-zhao']!, status: 'suspended' };
   await admin.query(`UPDATE front_claw_perf.performance_config SET value=$1 WHERE key=$2`, [JSON.stringify(policyM05(2, members)), ACCESS_POLICY_KEY]);
   await admin.query('COMMIT'); await admin.end();
@@ -153,4 +159,44 @@ it('真实PG竞态：「对」与撤权同时发生 —— 撤权事务持锁，
   expect(await say(a, 'm-zhao', '对', 'rv-3')).toBe(ACCESS_DENIED);
   expect(await entries560(url)).toBe(0);
   await a.service.close();
+}, 30_000);
+
+it('PG binding: NOWAIT refuses a busy binding before any business settlement', async () => {
+  const url = await seeded(); const a = await adapter(url, 'binding-revoke');
+  const blocker = await rawClient(url);
+  try {
+    await say(a, 'm-zhao', SHEET, 'binding-draft');
+    await blocker.query('BEGIN');
+    await blocker.query(`SELECT * FROM front_claw_perf.wecom_bot_bindings WHERE bot_id=$1 AND member_id=$2 FOR UPDATE`, ['fc-bot', 'm-zhao']);
+    a.channels.send('m-zhao', '对', 'binding-confirm');
+    await a.service.idle();
+    expect(a.channels.replies().at(-1)).toContain('争用已回滚');
+    expect(await entries560(url)).toBe(0);
+    await blocker.query(`UPDATE front_claw_perf.wecom_bot_bindings SET active=false, version=version+1 WHERE bot_id=$1 AND member_id=$2`, ['fc-bot', 'm-zhao']);
+    await blocker.query('COMMIT'); await a.service.idle();
+    expect(await entries560(url)).toBe(0);
+  } finally {await blocker.query('ROLLBACK'); await blocker.end(); await a.service.close();}
+}, 30_000);
+
+it('PG binding: commit holds the binding row until ledger commit; a later revocation serializes behind it', async () => {
+  const url = await seeded(); const a = await adapter(url, 'binding-commit');
+  const blocker = await rawClient(url), revoker = await rawClient(url);
+  const lockKey = (value: string) => {let hash = 0; for (let i = 0; i < value.length; i++) hash = (Math.imul(hash, 31) + value.charCodeAt(i)) | 0; return hash;};
+  const keys = [lockKey('s-b'), lockKey('2026-11-12')];
+  let revoke: Promise<unknown> | undefined;
+  try {
+    await say(a, 'm-zhao', SHEET, 'binding-first-draft');
+    await blocker.query('SELECT pg_advisory_lock($1,$2)', keys);
+    a.channels.send('m-zhao', '对', 'binding-first-confirm');
+    await waitForLockWait(url, 'SELECT pg_advisory_xact_lock%');
+    revoke = revoker.query(`UPDATE front_claw_perf.wecom_bot_bindings SET active=false, version=version+1 WHERE bot_id=$1 AND member_id=$2`, ['fc-bot', 'm-zhao']);
+    await waitForLockWait(url, 'UPDATE front_claw_perf.wecom_bot_bindings%');
+    await blocker.query('SELECT pg_advisory_unlock($1,$2)', keys);
+    await revoke; await a.service.idle();
+    expect(await entries560(url)).toBe(1);
+    const previous = a.channels.replies().length;
+    await say(a, 'm-zhao', '对', 'binding-after-revoke');
+    expect(await entries560(url)).toBe(1);
+    expect(a.channels.replies().length).toBeGreaterThanOrEqual(previous);
+  } finally {await blocker.query('SELECT pg_advisory_unlock($1,$2)', keys); await revoke; await blocker.end(); await revoker.end(); await a.service.close();}
 }, 30_000);

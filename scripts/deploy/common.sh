@@ -42,6 +42,13 @@ require_server_config() {
   export CORE_ENV_FILE ADMIN_ENV_FILE
   case "$(realpath -m "$DEPLOY_DIR")" in "$(git rev-parse --show-toplevel)"/*) echo 'state directory must be outside repository' >&2; exit 2 ;; esac
 }
+# The same inode is retained by every deployment entry point.
+if (( apply )); then
+  test -d "$DEPLOY_DIR" && test "$(stat -c '%a' "$DEPLOY_DIR")" = 700 || { echo 'private deployment directory required' >&2; exit 2; }
+  test ! -L "$DEPLOY_DIR/deploy.lock" || exit 2
+  exec 9>>"$DEPLOY_DIR/deploy.lock"
+  flock -n 9 || { echo 'deployment busy' >&2; exit 2; }
+fi
 compose() {
   docker compose --env-file "$ADMIN_ENV_FILE" -p front-dot -f deploy/compose.json "$@"
 }
