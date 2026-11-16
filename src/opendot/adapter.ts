@@ -1,3 +1,4 @@
+import { safeInboundDiagnostics } from './inbound-diagnostics.js';
 import { snapshotBinding, sameBinding, type WecomBotBinding } from '../role-eval/wecom-bot-bindings.js';
 import { capturePendingArrival } from '../role-eval/pending-order.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -205,11 +206,10 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
     const logInbound = async (reason?: string) => {
       const observation = reason ? undefined : observations.get(event.messageId);
       if (!reason) observations.delete(event.messageId);
-      try { host.logger.info({ event: 'inbound_message',
-        route: observation?.route ?? '追问',
-        gateReason: reason ?? (observation?.gateReason === 'not_applicable' ? 'not_applicable' : 'permission'),
-        ...(denial ? { identityReason: denial } : {}),
-        errorCategory: reason === 'failed' ? 'processing_error' : reason === 'timeout' || reason === 'cancelled' ? reason : 'none' }); } catch { /* Logs cannot change business results. */ }
+      try { host.logger.info(safeInboundDiagnostics({
+        route: observation?.route ?? '追问', gateReason: reason ?? observation?.gateReason ?? 'not_applicable',
+        pendingSequence: observation?.pendingSequence, modelMs: observation?.modelMs, identityReason: denial,
+        errorCategory: reason === 'failed' ? 'processing_error' : reason === 'timeout' || reason === 'cancelled' ? reason : observation?.errorCategory ?? 'none' })); } catch { /* Logs cannot change business results. */ }
     };
     if (closing) { stats.droppedClosing++; void logInbound('closing'); return; }
     // 旧消费者（租约本地已过期）不做任何业务写入，也不回复。
@@ -272,7 +272,11 @@ export async function startFrontClawOpenDotService(host: OpenDotHost, deps: Adap
         const result = await read(() => boot.handler.handleMessage({
           memberId: event.memberId, text: event.text, messageId: event.messageId, arrivedAt, pendingArrival,
           sessionId: sha(['opendot', binding.corpId, event.botId, event.memberId, binding.accountId]),
-          binding: Object.freeze(structuredClone(binding)), validateBinding, channelActive: active,
+          binding: Object.freeze(structuredClone(binding)), validateBinding,
+          readBinding: async () => {
+            const latest = await read(() => bindingFor(Object.freeze(structuredClone(event))));
+            return 'identity' in latest ? structuredClone(latest.identity.binding) : null;
+          }, channelActive: active,
           bindingVersion: binding.version, signal: op.controller.signal, deadline,
           ...(op.fence ? { fence: { ...op.fence } } : {}),
         }));

@@ -1,0 +1,2 @@
+import {defineConfig} from 'vitest/config';
+export default defineConfig({test:{include:["tests/opendot/append-evidence.integration.test.ts", "tests/r1/r1-pg.integration.test.ts", "tests/role-eval/access-pg-m03.integration.test.ts", "tests/role-eval/appointment-pg-m05.integration.test.ts", "tests/role-eval/ledger-pg-m04.integration.test.ts", "tests/role-eval/employee-loop-pg-m02.integration.test.ts", "tests/ci-upgrade/recovery.integration.test.ts", "tests/e2e/local.integration.test.ts"],fileParallelism:false,maxWorkers:1}});

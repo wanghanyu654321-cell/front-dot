@@ -16,6 +16,7 @@ import type { CommitGuard, GateSnapshot, PerformanceStore, Person } from './perf
 export interface GateTarget { personId: string; displayName: string; storeId: string }
 export interface GateSpec {
   actor: Person;
+  readBinding?: (() => Promise<WecomBotBinding | null>) | undefined;
   binding?: Readonly<WecomBotBinding> | undefined;
   validate?: (() => Promise<boolean>) | undefined;
   active?: (() => boolean) | undefined;
@@ -72,13 +73,24 @@ export function evaluateGate(spec: GateSpec, snapshot: GateSnapshot): GateResult
   return { ok: true };
 }
 
+function snapshotSpec(spec: GateSpec): GateSpec {
+  return { ...spec, actor: Object.freeze(structuredClone(spec.actor)),
+    binding: spec.binding ? Object.freeze(structuredClone(spec.binding)) : undefined,
+    storeIds: Object.freeze([...spec.storeIds]), targets: Object.freeze(structuredClone(spec.targets ?? [])),
+    observe: Object.freeze([...(spec.observe ?? [])]), platform: spec.platform ? Object.freeze([...spec.platform]) : undefined,
+    fence: spec.fence ? Object.freeze({ ...spec.fence }) : undefined };
+}
+
 /** 事务内使用：stores 在同一事务里 FOR SHARE 读 keys 与 personIds，再调用 checkSnapshot。 */
 export function commitGuard(spec: GateSpec, onDeny?: (reason: Exclude<GateResult, { ok: true }>['reason']) => void): CommitGuard {
+  spec = snapshotSpec(spec);
   const keys = gateKeys(spec);
   return {
     ...(spec.binding ? { binding: Object.freeze(structuredClone(spec.binding)) } : {}),
+    ...(spec.readBinding ? { readBinding: spec.readBinding } : {}),
     ...(spec.validate ? { validate: spec.validate } : {}),
     ...(spec.active ? { active: spec.active } : {}),
+    contention: 'restore_pending',
     key: keys[0] ?? '',
     extraKeys: keys.slice(1),
     personIds: gatePeople(spec),
@@ -90,10 +102,12 @@ export function commitGuard(spec: GateSpec, onDeny?: (reason: Exclude<GateResult
 
 /** 事务外使用：读当前数据后同一判定。 */
 export async function checkGateNow(store: Pick<PerformanceStore, 'getConfig' | 'getPerson'>, spec: GateSpec): Promise<GateResult> {
+  spec = snapshotSpec(spec);
   if (spec.validate && !await spec.validate()) return { ok: false, reason: 'binding_changed' };
   const config: Record<string, string | null> = {};
   for (const key of gateKeys(spec)) config[key] = await store.getConfig(key);
   const people: Record<string, Person | null> = {};
-  for (const id of gatePeople(spec)) people[id] = await store.getPerson(id);
-  return evaluateGate(spec, { config, people, ...(spec.binding ? { binding: structuredClone(spec.binding) } : {}) });
+  for (const id of gatePeople(spec)) people[id] = structuredClone(await store.getPerson(id));
+  const binding = spec.binding && spec.readBinding ? structuredClone(await spec.readBinding()) : null;
+  return evaluateGate(spec, { config, people, binding });
 }

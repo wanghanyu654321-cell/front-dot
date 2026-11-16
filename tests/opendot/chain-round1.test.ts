@@ -264,12 +264,13 @@ it('BUDGET: a hung final fence read terminates without a send', async () => {
 });
 
 it('BUDGET: a hung reply leaves durable unknown and is never retried after restart', async () => {
-  const t = await boot(true, 80); const channel = t.channels.current().channel;
-  const original = channel.reply.bind(channel); let release!: () => void;
+  const t = await boot(true, 500); const channel = t.channels.current().channel;
+  const original = channel.reply.bind(channel); let release!: () => void; let replyStarted=false;
   const held = new Promise<void>(r => {release = r;});
-  channel.reply = async (event, text, scope) => {await held; return original(event, text, scope);};
+  channel.reply = async (event, text, scope) => {replyStarted=true;await held; return original(event, text, scope);};
   try {
     await t.say('我的进度', 'synthetic-hung-reply');
+    expect(replyStarted).toBe(true);
     const id = operationIdFor({botId: BOT, corpId: CORP, memberId: MEMBER, messageId: 'synthetic-hung-reply'});
     expect(await t.service.result(id)).toMatchObject({state: 'timeout', replyState: 'unknown'});
     release(); await t.service.close();

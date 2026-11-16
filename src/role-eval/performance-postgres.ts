@@ -161,40 +161,74 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
    * 撤权（配置 FOR UPDATE）与人员变更（UPSERT 行锁）都与这里互斥：先完成者决定结果。
    */
   async function lockSnapshot(query: SqlClient['query'], guard: CommitGuard): Promise<GateSnapshot> {
-    // Keep every acquired lock until commit. Refuse a busy guard row immediately,
-    // including when an externally composed transaction holds people/binding before config.
-    // The exception must leave the transaction so its caller rolls back all statements.
+    // Probe in a savepoint. If a row is busy, release ALL gate locks before
+    // waiting on that one row. One bounded wait and one fresh snapshot only;
+    // business statements are never retried and reverse lock order cannot cycle.
+    let busy: { sql: string; params: readonly unknown[] } | undefined;
     async function shared(sql: string, params: readonly unknown[]) {
       try { return await query(`${sql} NOWAIT`, params); }
       catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === '55P03') throw new CommitContentionRejected();
+        if (error && typeof error === 'object' && 'code' in error && error.code === '55P03') {
+          busy = { sql, params }; throw new CommitContentionRejected();
+        }
         throw error;
       }
     }
-    const config: Record<string, string | null> = {};
-    // R1：配置行按统一锁序加锁（高水位第一，见 configLockOrder），与策略变更不交叉死锁。
-    for (const key of configLockOrder(guardKeys(guard))) {
-      const found = await shared(`SELECT * FROM ${relation('performance_config')} WHERE key=$1 FOR SHARE`, [key]);
-      config[key] = found.rows[0] ? text((found.rows[0] as Row).value) : null;
-    }
-    const people: Record<string, Person | null> = {};
-    for (const id of [...(guard.personIds ?? [])].sort()) {
-      const found = await shared(`SELECT * FROM ${relation('performance_people')} WHERE person_id=$1 FOR SHARE`, [id]);
-      people[id] = found.rows[0] ? personFrom(found.rows[0] as Row) : null;
-    }
-    let binding: WecomBotBinding | null = null;
-    if (guard.binding) {
-      const { rows } = await shared(`SELECT * FROM ${relation('wecom_bot_bindings')} WHERE bot_id=$1 AND member_id=$2 FOR SHARE`, [guard.binding.botId, guard.binding.memberId]);
-      if (rows.length === 1) {
-        const row = rows[0] as Row;
-        try { binding = snapshotBinding({ botId: row.bot_id, memberId: row.member_id, corpId: row.corp_id, accountId: row.account_id, version: Number(row.version), active: row.active }); } catch { /* fail closed */ }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await query('SAVEPOINT commit_gate');
+      try {
+        const config: Record<string, string | null> = {};
+        // Lock configuration keys in the shared order, with high-water first.
+        for (const key of configLockOrder(guardKeys(guard))) {
+          const found = await shared(`SELECT * FROM ${relation('performance_config')} WHERE key=$1 FOR SHARE`, [key]);
+          config[key] = found.rows[0] ? text((found.rows[0] as Row).value) : null;
+        }
+        const people: Record<string, Person | null> = {};
+        for (const id of [...(guard.personIds ?? [])].sort()) {
+          const found = await shared(`SELECT * FROM ${relation('performance_people')} WHERE person_id=$1 FOR SHARE`, [id]);
+          people[id] = found.rows[0] ? personFrom(found.rows[0] as Row) : null;
+        }
+        let binding: WecomBotBinding | null = null;
+        if (guard.binding) {
+          const { rows } = await shared(`SELECT * FROM ${relation('wecom_bot_bindings')} WHERE bot_id=$1 AND member_id=$2 FOR SHARE`, [guard.binding.botId, guard.binding.memberId]);
+          if (rows.length === 1) {
+            const row = rows[0] as Row;
+            try { binding = snapshotBinding({ botId: row.bot_id, memberId: row.member_id, corpId: row.corp_id, accountId: row.account_id, version: Number(row.version), active: row.active }); } catch { /* fail closed */ }
+          }
+        }
+        await query('RELEASE SAVEPOINT commit_gate');
+        return { config, people, binding };
+      } catch (error) {
+        await query('ROLLBACK TO SAVEPOINT commit_gate');
+        if (!(error instanceof CommitContentionRejected) || !busy || attempt !== 0) {
+          await query('RELEASE SAVEPOINT commit_gate'); throw error;
+        }
+        try {
+          await query("SET LOCAL lock_timeout='750ms'");
+          await query(busy.sql, busy.params);
+        } catch (waitError) {
+          await query('ROLLBACK TO SAVEPOINT commit_gate');
+          await query('RELEASE SAVEPOINT commit_gate');
+          if (waitError && typeof waitError === 'object' && 'code' in waitError && waitError.code === '55P03') throw new CommitContentionRejected();
+          throw waitError;
+        }
+        // Discard the wait lock too. Re-read every authorization row on the retry.
+        await query('ROLLBACK TO SAVEPOINT commit_gate');
+        await query('RELEASE SAVEPOINT commit_gate');
       }
     }
-    return { config, people, binding };
+    throw new CommitContentionRejected();
   }
   /** M03/M04 提交守卫：同一事务内共享锁读；拒绝则仅在本消费者仍是当前持有者时把草稿退回待确认。 */
   async function guardAllows(query: SqlClient['query'], draft: Draft, guard: CommitGuard): Promise<boolean> {
-    if ((!guard.validate || await guard.validate()) && guardPasses(guard, await lockSnapshot(query, guard))) return true;
+    try {
+      if ((!guard.validate || await guard.validate()) && guardPasses(guard, await lockSnapshot(query, guard))) return true;
+    } catch (error) {
+      // Only the unified confirmation gate opts into compensation. Legacy callers
+      // keep the classified exception and full transaction rollback contract.
+      // lockSnapshot confirmed ROLLBACK TO SAVEPOINT; no business SQL ran.
+      if (!(error instanceof CommitContentionRejected) || guard.contention !== 'restore_pending') throw error;
+    }
     await revertIfCurrentHolder(query, draft, guard.fence);
     return false;
   }
@@ -241,10 +275,10 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
   async function revertIfCurrentHolder(query: SqlClient['query'], draft: Draft, fence: WriteFence | undefined): Promise<boolean> {
     try {
       return await fencedWriteIn(query, fence, async (q, lease) => {
-        const l = lease(6);
+        const l = lease(7);
         const back = await q(
-          `UPDATE ${relation('performance_drafts')} SET status=$1, closed_at=$2 WHERE draft_id=$3 AND status=$4 AND NOT EXISTS (SELECT 1 FROM ${relation('performance_drafts')} other WHERE other.reporter_person_id=$5 AND other.status='pending')${l.sql} RETURNING draft_id`,
-          ['pending', null, draft.draftId, 'confirming', draft.reporterPersonId, ...l.params],
+          `UPDATE ${relation('performance_drafts')} SET status=$1, closed_at=$2 WHERE draft_id=$3 AND status=$4 AND ((payload_json::jsonb->'employeeContext') - 'finalReply'::text) IS NOT DISTINCT FROM (($6::jsonb->'employeeContext') - 'finalReply'::text) AND NOT EXISTS (SELECT 1 FROM ${relation('performance_drafts')} other WHERE other.reporter_person_id=$5 AND other.status='pending')${l.sql} RETURNING draft_id`,
+          ['pending', null, draft.draftId, 'confirming', draft.reporterPersonId, JSON.stringify(draft.payload), ...l.params],
         );
         return back.rows.length === 1;
       });
@@ -256,10 +290,10 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
   /** 只有仍在 confirming 的草稿能被本次关闭；返回是否由本次关闭（行锁随 UPDATE 持有到事务结束）。 */
   async function closeConfirming(query: SqlClient['query'], draft: Draft, guard?: CommitGuard): Promise<boolean> {
     if (guard?.active && !guard.active()) return false;
-    const fenced = fenceClause(guard, 6);
+    const fenced = fenceClause(guard, 7);
     const changed = await query(
-      `UPDATE ${relation('performance_drafts')} SET status=$1, payload_json=$2, closed_at=$3 WHERE draft_id=$4 AND status=$5${fenced.sql} RETURNING draft_id`,
-      [draft.status, JSON.stringify(draft.payload), draft.closedAt, draft.draftId, 'confirming', ...fenced.params],
+      `UPDATE ${relation('performance_drafts')} SET status=$1, payload_json=$2, closed_at=$3 WHERE draft_id=$4 AND status=$5 AND ((payload_json::jsonb->'employeeContext') - 'finalReply'::text) IS NOT DISTINCT FROM (($6::jsonb->'employeeContext') - 'finalReply'::text)${fenced.sql} RETURNING draft_id`,
+      [draft.status, JSON.stringify(draft.payload), draft.closedAt, draft.draftId, 'confirming', JSON.stringify(draft.payload), ...fenced.params],
     );
     return changed.rows.length === 1;
   }
@@ -503,7 +537,7 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
         if (!closed) {
           // 补偿仅当前持有者能退回；退回或带 fence 的关闭失败都视为拒绝（-1）。
           // 无 fence 且未认领（仍 pending）走原来的 0，避免把「无认领 commit」当成已入账。
-          // R17 / D151：本次没有把 confirming 改成 confirmed，返回 0（已处理），不把已有入账行数当成「本次写入」。
+          // Only this transition counts as a write; existing rows are not writes by this call.
           const reverted = await fencedOut(query, draft, guard);
           if (reverted || guard?.fence) return -1;
           return 0;
@@ -633,10 +667,16 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
             let raw: string | null = null;
             let snapshot: GateSnapshot = { config: {}, people: {} };
             if (options.guard) {
-              snapshot = await lockSnapshot(query, options.guard);
+              let allowed = false;
+              try {
+                snapshot = await lockSnapshot(query, options.guard);
+                allowed = (!options.guard.validate || await options.guard.validate()) && guardPasses(options.guard, snapshot);
+              } catch (error) {
+                if (!(error instanceof CommitContentionRejected) || options.guard.contention !== 'restore_pending') throw error;
+              }
               raw = snapshot.config[options.guard.key] ?? null;
-              if (!guardPasses(options.guard, snapshot)) {
-                await query(`UPDATE ${relation('performance_drafts')} SET status=$1, closed_at=$2 WHERE draft_id=$3 AND status=$4 RETURNING draft_id`, ['pending', null, draft.draftId, 'confirming']);
+              if (!allowed) {
+                await revertIfCurrentHolder(query, draft, options.guard.fence);
                 return { total: 0, claimed: false, outcome: 'denied' as const, noticesWritten: 0 };
               }
             }

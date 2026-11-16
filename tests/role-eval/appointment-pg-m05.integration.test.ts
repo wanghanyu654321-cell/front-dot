@@ -1,6 +1,6 @@
 import { startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS } from '../helpers/pg-cluster.js';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { Client } from 'pg';
+import { Client, trackDatabase } from '../helpers/pg-resources.js';
 import { FRONT_CLAW_DATABASE_URL, openPerformanceStore } from '../../src/role-eval/performance-open.js';
 import { createWecomBotHandler } from '../../src/role-eval/wecom-bot-unified-handler.js';
 import { ACCESS_POLICY_KEY, updateAccessPolicy } from '../../src/role-eval/access-policy.js';
@@ -28,7 +28,7 @@ async function freshDatabase(): Promise<string> {
 }
 
 const at = NOW.toISOString();
-async function open(url: string) { return openPerformanceStore({ [FRONT_CLAW_DATABASE_URL]: url }, { requirePostgres: true }); }
+async function open(url: string) { return trackDatabase(await openPerformanceStore({ [FRONT_CLAW_DATABASE_URL]: url }, { requirePostgres: true })); }
 async function rawClient(url: string) { const c = new Client({ connectionString: url }); await c.connect(); return c; }
 async function count(url: string, sql: string, params: unknown[] = []): Promise<number> {
   const c = await rawClient(url);

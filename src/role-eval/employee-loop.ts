@@ -50,6 +50,7 @@ export interface EmployeeMessage {
   /** 由已认证入口传入，不能从聊天正文构造。 */
   messageId?: string; sessionId?: string; bindingVersion?: number;
   signal?: AbortSignal; deadline?: number;
+  readBinding?: () => Promise<import('./wecom-bot-bindings.js').WecomBotBinding | null>;
   binding?: Readonly<import('./wecom-bot-bindings.js').WecomBotBinding>;
   validateBinding?: () => Promise<boolean>;
   channelActive?: () => boolean;
@@ -276,7 +277,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       ? draft.payload.added.map(item => ({ personId: item.employeeId ?? '', displayName: item.employeeName, storeId: draft.storeId }))
       : draft.payload.type === 'target' && draft.payload.target.kind !== 'store' ? [{ personId: draft.payload.target.personId, displayName: draft.payload.target.personName, storeId: draft.payload.target.storeId }] : [];
     const pinned = input ? pinnedVersion.get(input) : undefined;
-    return { actor, capability, storeIds, targets, policyMode, platform, fence: input?.fence, binding: input?.binding, validate: input?.validateBinding, active: input ? () => !input.signal?.aborted && performance.now() < (input.deadline ?? Infinity) && (input.channelActive?.() ?? true) : undefined, nowMs: () => now().getTime(), ...(pinned !== undefined ? { policyVersion: pinned } : {}) };
+    return { actor, capability, storeIds, targets, policyMode, platform, fence: input?.fence, binding: input?.binding, readBinding: input?.readBinding, validate: input?.validateBinding, active: input ? () => !input.signal?.aborted && performance.now() < (input.deadline ?? Infinity) && (input.channelActive?.() ?? true) : undefined, nowMs: () => now().getTime(), ...(pinned !== undefined ? { policyVersion: pinned } : {}) };
   }
   function guardFor(draft: Draft, actor: Person, input?: EmployeeMessage, observe: readonly string[] = []): CommitGuard {
     return commitGuard({ ...specFor(draft, actor, input), observe }, reason => { if (input) gateReasons.set(input, reason); });

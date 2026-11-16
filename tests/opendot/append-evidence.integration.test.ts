@@ -1,4 +1,8 @@
-import {it, expect} from 'vitest';
+import {it, expect, beforeAll, afterAll} from 'vitest';
+import {startPgCluster, PG_START_HOOK_TIMEOUT_MS, PG_STOP_HOOK_TIMEOUT_MS} from '../helpers/pg-cluster.js';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
 import {Client, Pool} from 'pg';
 import {spawn, type ChildProcess} from 'node:child_process';
 import {readFile, writeFile} from 'node:fs/promises';
@@ -31,11 +35,13 @@ const errorOf = (e: unknown) => {
 const echoCents=(text:string)=>yuanStringToCents(/共\s*([0-9.]+)元/.exec(text)?.[1]??'')??Number.NaN;
 const hashLock=(v: string) => {let h=0;for(let i=0;i<v.length;i++)h=(Math.imul(h,31)+v.charCodeAt(i))|0;return h;};
 
-it('APPEND: collect every synthetic PG scene and postcondition before asserting', async () => {
-  const output=process.env.APPEND_EVIDENCE_DIR!;
-  const runtime=process.env.APPEND_RUNTIME_DIR!;
-  const base=process.env.APPEND_PG_BASE!;
-  if(process.env.APPEND_OWNED_PG!=='1' || !/^postgres:\/\/append_synthetic@localhost:55482$/.test(base??''))throw Error('owned_pg_required');
+let owned: Awaited<ReturnType<typeof startPgCluster>>;
+let output: string;
+beforeAll(async()=>{owned=await startPgCluster();output=process.env.SYNTHETIC_EVIDENCE_DIR ?? await mkdtemp(join(tmpdir(),'synthetic-evidence-'));},PG_START_HOOK_TIMEOUT_MS);
+afterAll(async()=>{try {await owned?.stop();} finally { /* Synthetic evidence is retained for review, including failures. */ }},PG_STOP_HOOK_TIMEOUT_MS);
+it('collects all synthetic PG scenes and postconditions before asserting', async () => {
+  const runtime=fileURLToPath(new URL('./runtime/',import.meta.url));
+  const base=owned.base;
   const world=await import(pathToFileURL(join(runtime,'synthetic.mjs')).href) as {
     BOT:string;CORP:string;STORE:string;NOW:string;DAY:string;people:Person[];
     seedSynthetic(o:OpenedPerformanceStore,m:typeof access):Promise<void>;
@@ -53,7 +59,7 @@ it('APPEND: collect every synthetic PG scene and postcondition before asserting'
     try {const value=await fn();return value;}
     catch(e){record.errors.push({phase:name,...errorOf(e)});return undefined;}
   }
-  async function raw(url:string){const c=new Client({connectionString:url,host:'localhost',connectionTimeoutMillis:2000,query_timeout:8000});await c.connect();return c;}
+  async function raw(url:string){const c=new Client({connectionString:url,connectionTimeoutMillis:2000,query_timeout:8000});await c.connect();return c;}
   async function query(url:string,sql:string,params:unknown[]=[]){const c=await raw(url);try{return(await c.query(sql,params)).rows;}finally{await c.end();}}
   async function fresh(){
     const db=`append_synthetic_${++sequence}`;
@@ -188,7 +194,7 @@ it('APPEND: collect every synthetic PG scene and postcondition before asserting'
       let reverseWork:Promise<void>|undefined,reverseFinished=false,commitActive=false,paused=false;const heldConfig=deferred(),proceed=deferred(),commitDone=deferred();
       const outcome=(actor:string,result:unknown)=>mark(record.timeline,'outcome',{actor,result});
       await phase(record,'scenario',async()=>{
-        url=await fresh();pool=new Pool({connectionString:url,host:'localhost',max:4,connectionTimeoutMillis:2000,query_timeout:8000});
+        url=await fresh();pool=new Pool({connectionString:url,max:4,connectionTimeoutMillis:2000,query_timeout:8000});
         const settings=async(q:(sql:string)=>Promise<unknown>,who:string)=>{
           await q("SET LOCAL lock_timeout='2500ms'");await q("SET LOCAL statement_timeout='6000ms'");await q('SAVEPOINT append_settings');
           try{await q("SET LOCAL deadlock_timeout='100ms'");record.settings.push({who,deadlockTimeout:'100ms'});}
@@ -202,7 +208,7 @@ it('APPEND: collect every synthetic PG scene and postcondition before asserting'
             if(active)record.commitPid=(await c.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
             const q:SqlClient['query']=async(text,params)=>{
               const rows=(await c.query(text,params?[...params]:[])).rows;
-              if(active)mark(record.timeline,'commit_sql_completed',{kind:text.includes('performance_config')?'config':text.includes('performance_people')?'people':text.includes('wecom_bot_bindings')?'binding':text.startsWith('SELECT pg_advisory')?'advisory':'business',lock:/FOR SHARE/.test(text)?'share':null});
+              if(active)mark(record.timeline,'commit_sql_completed',{kind:text==='ROLLBACK TO SAVEPOINT commit_gate'?'rollback-gate':text.includes('performance_config')?'config':text.includes('performance_people')?'people':text.includes('wecom_bot_bindings')?'binding':text.startsWith('SELECT pg_advisory')?'advisory':'business',lock:/FOR SHARE/.test(text)?'share':null});
               if(active && first==='commit' && !paused && text.includes('performance_config') && /FOR SHARE/.test(text) && params?.[0]===access.ACCESS_POLICY_KEY){paused=true;heldConfig.release();await proceed.promise;}
               return {rows};
             };
@@ -249,14 +255,15 @@ it('APPEND: collect every synthetic PG scene and postcondition before asserting'
       if(service)await phase(record,'service_close',()=>service!.close());else if(pool)await phase(record,'pool_close',()=>pool!.end());
       check(record.id+':actions',record.errors.length===0,record.errors,[]);
       const codes=[record.commitError?.sqlstate,record.reverseOutcome?.sqlstate].filter(Boolean);
+      record.gateRolledBack=record.timeline.some((r:Row)=>r.kind==='rollback-gate');
       // Legal new semantics: only the commit guard's classified NOWAIT refusal is accepted.
       // Deadlocks, cancellation and reverse-side lock timeouts remain failures.
       record.classification={commit:record.commitOutcome,commitSqlstate:record.commitError?.sqlstate??null,reverse:record.reverseOutcome};
       check(record.id+':no-deadlock-or-timeout',codes.every(c=>c==='55P03') && record.reverseOutcome==='committed',codes,'commit 55P03 only; reverse committed');
-      check(record.id+':classified-safe-refusal',record.commitOutcome==='safe-refusal' && record.commitRejection?.sqlstate==='55P03' && record.commitRolledBack===true,record.classification,'guard NOWAIT refusal after rollback');
+      check(record.id+':classified-safe-refusal',record.commitResult===-1 && record.gateRolledBack===true,record.classification,'exact denied result after confirmed gate savepoint rollback');
       check(record.id+':reverse-revocation-committed',record.reverseOutcome==='committed' && (resource==='binding'?record.binding?.[0]?.active===false:record.person?.[0]?.active===false),{binding:record.binding,person:record.person},'revoked');
       check(record.id+':no-success-echo',!(record.replies??[]).some((r:Row)=>r.messageId==='append-synthetic-lock-confirm' && /已入账/.test(r.text)),record.replies,'no committed echo');
-      check(record.id+':rolled-back-draft',record.after?.drafts.length===1 && record.after.drafts[0]?.status==='confirming' && !record.after.drafts[0]?.payload.employeeContext?.finalReply,record.after?.drafts,'claim remains confirming; business settlement was rolled back');
+      check(record.id+':rolled-back-draft',record.after?.drafts.length===1 && record.after.drafts[0]?.status==='pending' && !record.after.drafts[0]?.payload.employeeContext?.finalReply,record.after?.drafts,'current claim restored to pending; no business settlement');
       check(record.id+':zero-source-rows',record.after?.sourceCounts.every((r:Row)=>r.count===0) && record.after?.totals.count===0,record.after?.sourceCounts,'zero writes and no retry');
       check(record.id+':bounded-ledger',record.after && record.after.totals.count<=1,record.after?.totals.count,'0 or 1');
       check(record.id+':accounting-consistent',record.after && ((record.commitResult===1 && record.after.totals.count===1)||(record.commitResult!==1 && record.after.totals.count===0)),{result:record.commitResult,rows:record.after?.totals.count},'committed iff one row');
@@ -266,7 +273,7 @@ it('APPEND: collect every synthetic PG scene and postcondition before asserting'
     let crashUrl:string|undefined;const children:{child:ChildProcess;exit:Promise<Row>;exited:boolean}[]=[];
     const sendLog=join(output,'synthetic-sends.jsonl');
     async function child(mode:'crash'|'recover'){
-      const cp=spawn(process.execPath,['--import',join(runtime,'network-guard.mjs'),join(runtime,'crash-worker.mjs'),process.env.APPEND_DIST!,crashUrl!,mode,sendLog],{
+      const cp=spawn(process.execPath,['--import',join(runtime,'network-guard.mjs'),join(runtime,'crash-worker.mjs'),join(process.cwd(),'dist'),crashUrl!,mode,sendLog],{
         cwd:process.cwd(),env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME!,NODE_ENV:'test'},stdio:['ignore','ignore','ignore','ipc']});
       const messages:Row[]=[];let failure:Row|undefined;
       const owned={child:cp,exited:false,exit:Promise.resolve({}) as Promise<Row>};

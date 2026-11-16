@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Executable Docker CLI fixture. Every command is recorded; unknown argv fails closed."""
+import json,os,pathlib,sys,signal
+p=pathlib.Path(os.environ['SYNTHETIC_DOCKER_STATE']);s=json.loads(p.read_text());a=sys.argv[1:]
+s['commands'].append(a)
+def done(value='',code=0):
+ p.write_text(json.dumps(s));print(json.dumps(value) if isinstance(value,(dict,list)) else value);sys.exit(code)
+old='sha256:'+'1'*64;new='sha256:'+'2'*64;pg='sha256:'+'3'*64
+if a[:2]==['image','inspect']:
+ tag=a[-1];image=old if tag in ['front-dot:legacy',old] else new
+ if s.get('tagDrift') and tag=='front-dot:legacy':image=new
+ done(dict(id=image,revision=('f'*40 if s.get('badProvenance') else s['sha']) if image==new else None,tree=s['tree'] if image==new else None))
+if a[:2]==['container','inspect']:
+ cid=a[-1]
+ if cid=='pg':
+  done(dict(id='pg',image=pg if not s.get('pgChanged') else new,tag='postgres:17',running=True,health='healthy',mounts=[dict(Type='volume',Name='synthetic-volume',Destination='/var/lib/postgresql/data')]))
+ done(dict(id='core',image=s['image'],tag='front-dot:legacy' if s['image']==old else new,running=s['running'],health='unhealthy' if s.get('unhealthy') and s['image']==new else 'healthy',mounts=[]))
+if a[:2]==['volume','inspect']:done(dict(name='synthetic-volume',driver='local',created='synthetic',mountpoint='/synthetic-volume'))
+if a and a[0]=='compose':
+ op=next((x for x in ['ps','stop','up'] if x in a),None)
+ if op=='ps':
+  service=a[-1]
+  done('pg' if service=='pg' else ('core\nother' if s.get('multiple') else 'core') if ('--all' in a or s['running']) else '')
+ if op=='stop':
+  s['running']=False;s['free']=not s.get('stuckLease');s['stops']=s.get('stops',0)+1
+  if s.get('pgDriftOnStop'):s['pgChanged']=True
+  if s.get('configDriftOnStop'):pathlib.Path(s['config']).chmod(0o644)
+  done()
+ if op=='up':
+  overrides=[a[i+1] for i,v in enumerate(a) if v=='-f'];image=json.loads(pathlib.Path(overrides[-1]).read_text())['services']['core']['image']
+  if s.get('failStart') and image==new:done(code=1)
+  if s.get('failRollback') and image==old:done(code=1)
+  s['image']=image;s['running']=True;s['free']=False;s['epoch']+=1
+  if image==new:s['entries']+=1
+  if s.get('signalOnStart') and image==new:
+   p.write_text(json.dumps(s));os.kill(os.getppid(),signal.SIGTERM);sys.exit(0)
+  done()
+if a[:2]==['exec','-i']:
+ sql=sys.stdin.read();s['sql'].append(sql)
+ if "'lease'" in sql:done(dict(lease='invalid' if s.get('unknownLease') else 'free' if s['free'] else 'active',epoch=s['epoch']))
+ if s.get('anchorWriteFail'):
+  for run in pathlib.Path(s['deploy']).glob('image-run-*'):run.chmod(0o500)
+ done(dict(schema=s['schema'],entries=s['entries'],drafts=1,notifications=1,accounts=2,bindings=2,roles=5,config=3))
+done(code=99)

@@ -23,6 +23,10 @@ jobs:
       - run: npm run build
       - name: Model entry boundary and deployment contracts
         run: npx vitest run tests/e2e tests/deploy
+      - name: Upgrade compatibility and command interface
+        run: |
+          npm run test:upgrade
+          npm run test:upgrade:image
       # 单元测试；live-model-smoke 依赖真实模型宿主环境，CI 跳过。不需要任何密钥。
       - run: npm run test:ci
 
@@ -81,6 +85,8 @@ jobs:
             -o "-c listen_addresses=127.0.0.1 -c port=$AUDIT_PG_PORT -c unix_socket_directories=$root/run -c fsync=off" start
           psql "postgres://frontclaw@127.0.0.1:$AUDIT_PG_PORT/postgres" -Atc 'select version()'
           echo "AUDIT_PG_URL=postgres://frontclaw@127.0.0.1:$AUDIT_PG_PORT/postgres" >> "$GITHUB_ENV"
+      - name: Owned PG upgrade regressions
+        run: npm run test:upgrade:pg
       - name: PG integration tests (full suite)
         run: npm run test:pg
       - name: Concurrent employee confirmation repeated five times
