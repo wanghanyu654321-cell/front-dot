@@ -23,7 +23,7 @@ import { checkGateNow, commitGuard, policyVersionOf, type GateSpec, type GateTar
 import type { Fence } from './fencing.js';
 import { appointmentClause, clauseKind, compoundHead, compoundTail, isSelfProgressQuery, isStorePerfQuery, leftoverNote, NOT_TODAY_REPLY, selfProgressPhrase, type ClauseKind } from './scope-refusal.js';
 import { consumerWrites } from './consumer-writes.js';
-import { FencedWriteRejected } from './performance-store.js';
+import { CommitContentionRejected, FencedWriteRejected } from './performance-store.js';
 import { resolveStoreHours } from './store-hours.js';
 import { ranking, storeById, storeByName, storeSummary, unreported } from './store-queries.js';
 import { formatYuan } from './money.js';
@@ -50,6 +50,9 @@ export interface EmployeeMessage {
   /** 由已认证入口传入，不能从聊天正文构造。 */
   messageId?: string; sessionId?: string; bindingVersion?: number;
   signal?: AbortSignal; deadline?: number;
+  binding?: Readonly<import('./wecom-bot-bindings.js').WecomBotBinding>;
+  validateBinding?: () => Promise<boolean>;
+  channelActive?: () => boolean;
   /** R1（M07）：消费租约 fencing；带上时所有入账在提交事务里核对租约 owner+epoch 未变、未到期。 */
   fence?: Fence;
   /** R7：入口分类接口已通过 schema 的结果；循环内再过校验链。默认桩不会把执行结果送到这里。 */
@@ -273,7 +276,7 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       ? draft.payload.added.map(item => ({ personId: item.employeeId ?? '', displayName: item.employeeName, storeId: draft.storeId }))
       : draft.payload.type === 'target' && draft.payload.target.kind !== 'store' ? [{ personId: draft.payload.target.personId, displayName: draft.payload.target.personName, storeId: draft.payload.target.storeId }] : [];
     const pinned = input ? pinnedVersion.get(input) : undefined;
-    return { actor, capability, storeIds, targets, policyMode, platform, fence: input?.fence, nowMs: () => now().getTime(), ...(pinned !== undefined ? { policyVersion: pinned } : {}) };
+    return { actor, capability, storeIds, targets, policyMode, platform, fence: input?.fence, binding: input?.binding, validate: input?.validateBinding, active: input ? () => !input.signal?.aborted && performance.now() < (input.deadline ?? Infinity) && (input.channelActive?.() ?? true) : undefined, nowMs: () => now().getTime(), ...(pinned !== undefined ? { policyVersion: pinned } : {}) };
   }
   function guardFor(draft: Draft, actor: Person, input?: EmployeeMessage, observe: readonly string[] = []): CommitGuard {
     return commitGuard({ ...specFor(draft, actor, input), observe }, reason => { if (input) gateReasons.set(input, reason); });
@@ -1696,6 +1699,10 @@ function createLoopCore(options: WecomBotHandlerOptions, cutoff: string, timeZon
       if (error instanceof AccessRevoked) text = gateReasons.get(input) === 'policy_changed' ? POLICY_CHANGED : ACCESS_DENIED;
       // R3（A-P1-1）：消费租约已被接管/过期 → 统一入口拒绝写入（零写入）；适配器同样不回复。
       else if (error instanceof FencedWriteRejected) { ledgerSettled = false; text = STALE_CONSUMER; }
+      else if (error instanceof CommitContentionRejected) {
+        outcome = 'unavailable'; ledgerSettled = false;
+        text = 'Front Claw：本次提交因争用已回滚，请查原操作结果；不要另报一笔。';
+      }
       else {
       outcome = 'unavailable';
       text = `Front Claw：账本暂不可用，结果未知；请查「入账结果 ${operationId ?? input.messageId ?? ''}」，不要另报一笔。`;

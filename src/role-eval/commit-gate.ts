@@ -1,3 +1,4 @@
+import { sameBinding, type WecomBotBinding } from './wecom-bot-bindings.js';
 import { ACCESS_POLICY_KEY, decideAccess, parseAccessPolicy, policyFrom, POLICY_LOCK_KEYS, standing, type Capability } from './access-policy.js';
 import { fenceHolds, parseLeaseRecord, type Fence } from './fencing.js';
 import type { CommitGuard, GateSnapshot, PerformanceStore, Person } from './performance-store.js';
@@ -15,6 +16,9 @@ import type { CommitGuard, GateSnapshot, PerformanceStore, Person } from './perf
 export interface GateTarget { personId: string; displayName: string; storeId: string }
 export interface GateSpec {
   actor: Person;
+  binding?: Readonly<WecomBotBinding> | undefined;
+  validate?: (() => Promise<boolean>) | undefined;
+  active?: (() => boolean) | undefined;
   /** 本次操作需要的能力与门店；capability=null 表示只要求有效身份（standing）。 */
   capability: Capability | null;
   storeIds: readonly string[];
@@ -31,7 +35,7 @@ export interface GateSpec {
    */
   policyVersion?: number | undefined;
 }
-export type GateResult = { ok: true } | { ok: false; reason: 'policy' | 'policy_changed' | 'actor_changed' | 'target_invalid' | 'fenced' };
+export type GateResult = { ok: true } | { ok: false; reason: 'policy' | 'policy_changed' | 'actor_changed' | 'target_invalid' | 'fenced' | 'binding_changed' };
 /** R2：策略原文里的版本号（缺失/损坏为 null）。 */
 export function policyVersionOf(raw: string | null): number | null {
   const parsed = parseAccessPolicy(raw);
@@ -47,6 +51,7 @@ export const gatePeople = (spec: GateSpec): string[] =>
   [...new Set([spec.actor.personId, ...(spec.targets ?? []).map(t => t.personId), ...(spec.observe ?? [])])].sort();
 
 export function evaluateGate(spec: GateSpec, snapshot: GateSnapshot): GateResult {
+  if (spec.active && !spec.active() || spec.binding && !sameBinding(spec.binding, snapshot.binding)) return { ok: false, reason: 'binding_changed' };
   if (spec.fence && !fenceHolds(parseLeaseRecord(snapshot.config[spec.fence.key] ?? null), spec.fence, spec.nowMs())) return { ok: false, reason: 'fenced' };
   const current = snapshot.people[spec.actor.personId] ?? null;
   const a = spec.actor;
@@ -71,6 +76,9 @@ export function evaluateGate(spec: GateSpec, snapshot: GateSnapshot): GateResult
 export function commitGuard(spec: GateSpec, onDeny?: (reason: Exclude<GateResult, { ok: true }>['reason']) => void): CommitGuard {
   const keys = gateKeys(spec);
   return {
+    ...(spec.binding ? { binding: Object.freeze(structuredClone(spec.binding)) } : {}),
+    ...(spec.validate ? { validate: spec.validate } : {}),
+    ...(spec.active ? { active: spec.active } : {}),
     key: keys[0] ?? '',
     extraKeys: keys.slice(1),
     personIds: gatePeople(spec),
@@ -82,9 +90,10 @@ export function commitGuard(spec: GateSpec, onDeny?: (reason: Exclude<GateResult
 
 /** 事务外使用：读当前数据后同一判定。 */
 export async function checkGateNow(store: Pick<PerformanceStore, 'getConfig' | 'getPerson'>, spec: GateSpec): Promise<GateResult> {
+  if (spec.validate && !await spec.validate()) return { ok: false, reason: 'binding_changed' };
   const config: Record<string, string | null> = {};
   for (const key of gateKeys(spec)) config[key] = await store.getConfig(key);
   const people: Record<string, Person | null> = {};
   for (const id of gatePeople(spec)) people[id] = await store.getPerson(id);
-  return evaluateGate(spec, { config, people });
+  return evaluateGate(spec, { config, people, ...(spec.binding ? { binding: structuredClone(spec.binding) } : {}) });
 }

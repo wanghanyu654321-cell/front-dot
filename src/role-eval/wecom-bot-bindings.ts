@@ -13,3 +13,9 @@ export function createWecomBotBindingReader(readCatalog:(scope:BotReadScope)=>Pr
  const binding=matches[0];if(matches.length!==1||!binding?.active)throw Error('access_denied');return binding;
  };
 }
+
+/** Value comparison; neither input is retained by the caller. */
+export function sameBinding(expected: Readonly<WecomBotBinding>, current: Readonly<WecomBotBinding> | null | undefined): boolean {
+ return !!current && current.active && expected.active &&
+  (['botId','corpId','memberId','accountId','version'] as const).every(key => current[key] === expected[key]);
+}

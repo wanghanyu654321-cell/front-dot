@@ -1,9 +1,10 @@
+import { snapshotBinding, type WecomBotBinding } from './wecom-bot-bindings.js';
 import { sequenceBefore } from './pending-order.js';
 import type {
   AliasRecord, Appointment, CommitGuard, Draft, DraftPayload, EntryFilter, EntryPatch, GateSnapshot, LedgerCommit, LedgerEntry,
   Notification, PerformanceStore, Person, Revision, RevisionMeta, SendSnapshot, StoreTarget, Target, WriteFence,
 } from './performance-store.js';
-import { claimTransition, clone, entryVersion, FencedWriteRejected, guardKeys, guardPasses, withDelivery } from './performance-store.js';
+import { claimTransition, clone, entryVersion, settledReportDraft, CommitContentionRejected, FencedWriteRejected, guardKeys, guardPasses, withDelivery } from './performance-store.js';
 import { assertStatus, decodeStatus, MAX_FENCE, resultFenceHolds } from './notification-status.js';
 import { assertWritableConfigKey, configLockOrder } from './protected-config.js';
 
@@ -160,22 +161,40 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
    * 撤权（配置 FOR UPDATE）与人员变更（UPSERT 行锁）都与这里互斥：先完成者决定结果。
    */
   async function lockSnapshot(query: SqlClient['query'], guard: CommitGuard): Promise<GateSnapshot> {
+    // Keep every acquired lock until commit. Refuse a busy guard row immediately,
+    // including when an externally composed transaction holds people/binding before config.
+    // The exception must leave the transaction so its caller rolls back all statements.
+    async function shared(sql: string, params: readonly unknown[]) {
+      try { return await query(`${sql} NOWAIT`, params); }
+      catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === '55P03') throw new CommitContentionRejected();
+        throw error;
+      }
+    }
     const config: Record<string, string | null> = {};
     // R1：配置行按统一锁序加锁（高水位第一，见 configLockOrder），与策略变更不交叉死锁。
     for (const key of configLockOrder(guardKeys(guard))) {
-      const found = await query(`SELECT * FROM ${relation('performance_config')} WHERE key=$1 FOR SHARE`, [key]);
+      const found = await shared(`SELECT * FROM ${relation('performance_config')} WHERE key=$1 FOR SHARE`, [key]);
       config[key] = found.rows[0] ? text((found.rows[0] as Row).value) : null;
     }
     const people: Record<string, Person | null> = {};
     for (const id of [...(guard.personIds ?? [])].sort()) {
-      const found = await query(`SELECT * FROM ${relation('performance_people')} WHERE person_id=$1 FOR SHARE`, [id]);
+      const found = await shared(`SELECT * FROM ${relation('performance_people')} WHERE person_id=$1 FOR SHARE`, [id]);
       people[id] = found.rows[0] ? personFrom(found.rows[0] as Row) : null;
     }
-    return { config, people };
+    let binding: WecomBotBinding | null = null;
+    if (guard.binding) {
+      const { rows } = await shared(`SELECT * FROM ${relation('wecom_bot_bindings')} WHERE bot_id=$1 AND member_id=$2 FOR SHARE`, [guard.binding.botId, guard.binding.memberId]);
+      if (rows.length === 1) {
+        const row = rows[0] as Row;
+        try { binding = snapshotBinding({ botId: row.bot_id, memberId: row.member_id, corpId: row.corp_id, accountId: row.account_id, version: Number(row.version), active: row.active }); } catch { /* fail closed */ }
+      }
+    }
+    return { config, people, binding };
   }
   /** M03/M04 提交守卫：同一事务内共享锁读；拒绝则仅在本消费者仍是当前持有者时把草稿退回待确认。 */
   async function guardAllows(query: SqlClient['query'], draft: Draft, guard: CommitGuard): Promise<boolean> {
-    if (guardPasses(guard, await lockSnapshot(query, guard))) return true;
+    if ((!guard.validate || await guard.validate()) && guardPasses(guard, await lockSnapshot(query, guard))) return true;
     await revertIfCurrentHolder(query, draft, guard.fence);
     return false;
   }
@@ -236,6 +255,7 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
   }
   /** 只有仍在 confirming 的草稿能被本次关闭；返回是否由本次关闭（行锁随 UPDATE 持有到事务结束）。 */
   async function closeConfirming(query: SqlClient['query'], draft: Draft, guard?: CommitGuard): Promise<boolean> {
+    if (guard?.active && !guard.active()) return false;
     const fenced = fenceClause(guard, 6);
     const changed = await query(
       `UPDATE ${relation('performance_drafts')} SET status=$1, payload_json=$2, closed_at=$3 WHERE draft_id=$4 AND status=$5${fenced.sql} RETURNING draft_id`,
@@ -490,7 +510,7 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
         }
         const explicitNew = draft.payload.type === 'report' && draft.payload.explicitNew === true;
         const contentKey = (row: { ownerPersonId: string; amount: string | number; customerName: string | null; note: string }) =>
-          JSON.stringify([row.ownerPersonId, String(row.amount), row.customerName, row.note]);
+          JSON.stringify([row.ownerPersonId, fromPgNumeric(row.amount), row.customerName, row.note]);
         const remaining = new Map<string, number>();
         if (closed && !explicitNew && entries.length) {
           const first = entries[0]!;
@@ -529,13 +549,15 @@ export function createPostgresPerformanceStore(client: SqlClient, storeOptions: 
             );
           }
         }
-        let total = 0;
+        const persisted: LedgerEntry[] = [];
         for (const entry of entries) {
           const found = await query(`SELECT * FROM ${relation('performance_entries')} WHERE entry_id=$1`, [entry.entryId]);
-          if (found.rows.length) total += 1;
+          if (found.rows.length) persisted.push(entry);
         }
         // 本次确实关闭了草稿：即使内容去重后没有新行，也返回至少 1，表示「这次改到了状态」。
-        return Math.max(1, total);
+        const settled = settledReportDraft(draft, persisted);
+        await query(`UPDATE ${relation('performance_drafts')} SET payload_json=$1 WHERE draft_id=$2 AND status=$3 RETURNING draft_id`, [JSON.stringify(settled.payload), draft.draftId, 'confirmed']);
+        return Math.max(1, persisted.length);
       });
     },
     async commitConfirmingTarget(draft, target, expectedBefore, guard) {

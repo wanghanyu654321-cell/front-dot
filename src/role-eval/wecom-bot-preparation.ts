@@ -30,42 +30,20 @@ export interface WecomBotPreparationOptions {
 const claimed = new WeakSet<object>();
 /** Opt-in (WECOM_DEBUG=1) masked lifecycle diagnostics. Never prints secrets, ids or message text. */
 const wecomDebugEnabled = (): boolean => {try {return typeof process !== 'undefined' && process.env?.WECOM_DEBUG === '1';} catch {return false;}};
-export function maskWecomValue(value: unknown): string {
-  const s = typeof value === 'string' ? value : typeof value === 'number' ? String(value) : '';
-  if (!s) return '<none>';
-  return '***' + (s.length >= 12 ? s.slice(-4) : '') + '(len=' + s.length + ')';
-}
-export function wecomDebug(event: string, fields: Record<string, unknown> = {}): void {
+export function maskWecomValue(_value: unknown): string { return '<omitted>'; }
+export function wecomDebug(_event: string, _fields: Record<string, unknown> = {}): void {
   if (!wecomDebugEnabled()) return;
-  try {console.log('WECOM_DEBUG ' + JSON.stringify({t: new Date().toISOString(), event, ...fields}));} catch {}
-}
-function sanitizeSdkLog(message: unknown, args: unknown[]): string {
-  let s = typeof message === 'string' ? message : '';
-  s = s.replace(/body=[\s\S]*$/, 'body=<omitted>');
-  s = s.replace(/(reqId|req_id|upload_id|media_id)([=:]\s*)([^\s,]+)/gi, (_m, k: string, sep: string, v: string) => k + sep + maskWecomValue(v));
-  s = s.replace(/[{[][\s\S]*$/, '<json-omitted>');
-  s = s.replace(/[A-Za-z0-9_\-+/=]{20,}/g, t => maskWecomValue(t));
-  const extra = args.map(a => a instanceof Error ? a.message : a).filter(a => typeof a === 'number' || (typeof a === 'string' && !/^\s*[{[]/.test(a)))
-    .map(a => String(a).replace(/[A-Za-z0-9_\-+/=]{20,}/g, t => maskWecomValue(t)).slice(0, 160));
-  return (s + (extra.length ? ' ' + extra.join(' ') : '')).slice(0, 400);
+  try { console.log('WECOM_DEBUG ' + JSON.stringify({event: 'lifecycle'})); } catch {}
 }
 const silentLogger = {debug() {}, info() {}, warn() {}, error() {}};
 export function wecomSdkLogger() {
   if (!wecomDebugEnabled()) return silentLogger;
-  const at = (level: string) => (message: unknown, ...args: unknown[]) => wecomDebug('sdk', {level, msg: sanitizeSdkLog(message, args)});
+  const at = (level: string) => (_message: unknown, ..._args: unknown[]) => {
+    try { console.log('WECOM_DEBUG ' + JSON.stringify({event: 'sdk', level})); } catch {}
+  };
   return {debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error')};
 }
-function describeFrame(frame: unknown): Record<string, unknown> {
-  const f = (frame && typeof frame === 'object' ? frame : {}) as {cmd?: unknown; headers?: {req_id?: unknown}; body?: Record<string, unknown>};
-  const b = (f.body && typeof f.body === 'object' ? f.body : {}) as Record<string, unknown>;
-  const from = (b.from && typeof b.from === 'object' ? b.from : {}) as Record<string, unknown>;
-  const text = (b.text && typeof b.text === 'object' ? b.text : {}) as Record<string, unknown>;
-  const ev = (b.event && typeof b.event === 'object' ? b.event : {}) as Record<string, unknown>;
-  return {cmd: typeof f.cmd === 'string' ? f.cmd.slice(0, 40) : '<none>', reqId: maskWecomValue(f.headers?.req_id), msgtype: typeof b.msgtype === 'string' ? b.msgtype.slice(0, 30) : undefined,
-    chattype: typeof b.chattype === 'string' ? b.chattype.slice(0, 20) : undefined, eventtype: typeof ev.eventtype === 'string' ? ev.eventtype.slice(0, 40) : undefined,
-    aibotid: maskWecomValue(b.aibotid), msgid: maskWecomValue(b.msgid), userid: maskWecomValue(from.userid), corpid: maskWecomValue(from.corpid),
-    textLength: typeof text.content === 'string' ? text.content.length : undefined};
-}
+function describeFrame(_frame: unknown): Record<string, unknown> { return {event: 'frame'}; }
 const fields = ['botId', 'corpId', 'ownerId', 'configVersion', 'credentialFingerprint', 'workspaceFingerprint'] as const;
 function isThenable(value: unknown): boolean {return !!value && (typeof value === 'object' || typeof value === 'function') && typeof (value as {then?: unknown}).then === 'function';}
 function absorbThenable(value: unknown) {if (isThenable(value)) void Promise.resolve(value).catch(() => {});}

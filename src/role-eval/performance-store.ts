@@ -1,3 +1,5 @@
+import { formatYuan } from './money.js';
+import { sameBinding, type WecomBotBinding } from './wecom-bot-bindings.js';
 import { sequenceBefore, type PendingArrival } from './pending-order.js';
 import { createHash } from 'node:crypto';
 import { assertStatus, bumpFence, decodeStatus, dueRaw, encodeStatus, outboxManaged, resultFenceHolds, type DeliveryMeta } from './notification-status.js';
@@ -29,12 +31,15 @@ export interface Person {
 }
 
 /** R1 入账门快照：同一事务内锁读的配置行与人员行（不存在为 null）。 */
-export interface GateSnapshot { config: Record<string, string | null>; people: Record<string, Person | null> }
+export interface GateSnapshot { config: Record<string, string | null>; people: Record<string, Person | null>; binding?: WecomBotBinding | null }
 /**
  * M03：提交时的授权判定，raw 为事务内读到的配置原文。
  * R1：带 extraKeys/personIds/checkSnapshot 时，store 在同一事务里 FOR SHARE 锁读这些配置键与人员行，交 checkSnapshot 统一判定。
  */
 export interface CommitGuard {
+  binding?: Readonly<WecomBotBinding>;
+  validate?: () => Promise<boolean>;
+  active?: () => boolean;
   key: string;
   check(raw: string | null): boolean;
   extraKeys?: readonly string[];
@@ -50,7 +55,17 @@ export interface CommitGuard {
 export const guardKeys = (guard: CommitGuard): string[] => [...new Set([guard.key, ...(guard.extraKeys ?? [])].filter(key => !!key))];
 /** store 共用：按快照或旧单键判定。 */
 export function guardPasses(guard: CommitGuard, snapshot: GateSnapshot): boolean {
+  if (guard.active && !guard.active()) return false;
+  if (guard.binding && !sameBinding(guard.binding, snapshot.binding)) return false;
   return guard.checkSnapshot ? guard.checkSnapshot(snapshot) : guard.check(snapshot.config[guard.key] ?? null);
+}
+
+/** Final report text is derived inside the commit from this draft's persisted rows. */
+export function settledReportDraft(draft: Draft, entries: readonly LedgerEntry[]): Draft {
+  if (draft.payload.type !== 'report' || !draft.payload.employeeContext) return draft;
+  return { ...draft, payload: { ...draft.payload, employeeContext: { ...draft.payload.employeeContext,
+    finalReply: `Front Claw：已入账 ${entries.length} 笔，共 ${formatYuan(entries.reduce((sum, row) => sum + row.amount, 0))}元。操作号 ${draft.draftId}。`,
+  } } };
 }
 
 export interface AliasRecord { storeId: string; alias: string; personId: string; }
@@ -311,6 +326,11 @@ export interface EntryFilter {
  */
 export interface WriteFence { key: string; owner: string; epoch: number; nowMs: () => number }
 export class FencedWriteRejected extends Error { constructor() { super('fenced_write_rejected'); this.name = 'FencedWriteRejected'; } }
+/** A guarded row was busy. Propagate through the transaction rollback; never retry a business write automatically. */
+export class CommitContentionRejected extends Error {
+  readonly code = '55P03';
+  constructor() { super('commit_contention_rejected'); this.name = 'CommitContentionRejected'; }
+}
 
 export interface PendingConditions { expiredAt?: string; arrivedAt?: string; unexpiredAt?: string; arrivedSequence?: string }
 export interface PendingReportWrite {
@@ -704,8 +724,9 @@ export class MemoryPerformanceStore implements PerformanceStore {
       if (!sourceConflict && !idConflict && !contentConflict) this.entries.push(clone(entry));
     }
     const index = this.drafts.findIndex(row => row.draftId === draft.draftId);
-    this.drafts[index] = clone(draft);
-    const total = entries.filter(entry => this.entries.some(row => row.entryId === entry.entryId)).length;
+    const persisted = entries.filter(entry => this.entries.some(row => row.entryId === entry.entryId));
+    this.drafts[index] = clone(settledReportDraft(draft, persisted));
+    const total = persisted.length;
     return Math.max(1, total);
   }
   private voidConflict(draftId: string, closedAt: string | null, guard?: CommitGuard): void {

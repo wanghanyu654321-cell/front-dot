@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import { createPostgresPerformanceStore, migratePerformance } from '../../src/role-eval/performance-postgres.js';
 import type { PerformanceStore } from '../../src/role-eval/performance-store.js';
-import { createMemoryBindingStore, type WecomBotBindingStore } from '../../src/role-eval/directory-store.js';
+import { createPostgresBindingStore, type WecomBotBindingStore } from '../../src/role-eval/directory-store.js';
 import type { OpenedPerformanceStore } from '../../src/role-eval/performance-open.js';
 import { APPOINTMENT_RECIPIENTS_KEY } from '../../src/role-eval/appointments.js';
 import { createWecomLongConnectionChannel, type FrontClawChannel } from '../../src/opendot/wecom-channel.js';
@@ -36,7 +36,7 @@ export async function memoryWorld(sqlFactory: () => MemorySql = () => new Memory
   const sql = sqlFactory();
   await migratePerformance(sql);
   const store = createPostgresPerformanceStore(sql);
-  const bindings = createMemoryBindingStore();
+  const bindings = createPostgresBindingStore(sql);
   await seedWorld(store, bindings);
   const closes = vi.fn(async () => {});
   const open = vi.fn(async (): Promise<OpenedPerformanceStore> => ({ store, bindings, driver: 'postgres', close: closes }));

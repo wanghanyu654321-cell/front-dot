@@ -147,7 +147,7 @@ export class MemorySql implements SqlClient {
 
   private select(sql: string, params: readonly unknown[]): Row[] {
     // M03: 行锁子句在单线程替身里无意义，忽略（真实锁序由 PG 集成测试覆盖）。
-    sql = sql.replace(/\s+FOR (?:SHARE|UPDATE)$/i, '');
+    sql = sql.replace(/\s+FOR (?:SHARE|UPDATE)(?: NOWAIT)?$/i, '');
     const match = new RegExp(String.raw`^SELECT \* FROM (${ident})(?: WHERE (.+))?$`, 'i').exec(sql);
     if (!match?.[1]) throw Error(sql);
     const table = this.rows(match[1]);
